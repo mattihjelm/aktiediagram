@@ -19,7 +19,7 @@ python3 -m pip install -r requirements.txt
 python3 aktier_graf.py
 ```
 
-Appen läser aktier och initial synlighet från `aktier.csv`, hämtar historik från 2010 och öppnar diagrammet i webbläsaren. Den lokala servern stoppas med Ctrl+C i terminalen. `aktier_graf.html` skapas som en statisk kopia; formuläret som sparar transaktioner använder den lokala servern.
+Appen läser aktier och initial synlighet från `aktier.csv`, hämtar historik från 2010 och öppnar diagrammet i webbläsaren. Dagskurser används först efter respektive börsstängning och en kort publiceringsmarginal, så ofullständiga kurser under handelsdagen inte används. Knappen **Hämta senaste slutkurser** hämtar senare tillgängliga dagskurser från Yahoo Finance utan att starta om appen och uppdaterar kurvor och resultat. Den lokala servern stoppas med Ctrl+C i terminalen. `aktier_graf.html` skapas som en statisk kopia; formuläret som sparar transaktioner och knappen för datauppdatering använder den lokala servern.
 
 ## Köp och sälj
 

@@ -23,7 +23,7 @@ Appen SHALL läsa aktietickrar, visningsnamn och initial synlighet från `aktier
 
 ### Requirement: Historiska kurser och indexerat jämförelsediagram
 
-Appen SHALL hämta justerade stängningskurser från Yahoo Finance med historik från 2010-01-01 och tillgängliga data till och med den aktuella dagen. Kurserna SHALL visas som separata kurvor i ett gemensamt diagram. Varje kurva SHALL indexeras till 100 vid den första tillgängliga kursen inom det synliga datumintervallet. Berkshire Hathaway B (`BRK-B`) SHALL räknas om från USD till SEK med hämtad USD/SEK-kurs. Aktier utan användbar kursdata SHALL hoppas över utan att stoppa övriga diagrammet.
+Appen SHALL hämta justerade dagskurser från Yahoo Finance med historik från 2010-01-01. Dagens kurs SHALL endast inkluderas efter respektive börsstängning och en kort publiceringsmarginal. Kurserna SHALL visas som separata kurvor i ett gemensamt diagram. Varje kurva SHALL indexeras till 100 vid den första tillgängliga kursen inom det synliga datumintervallet. Berkshire Hathaway B (`BRK-B`) SHALL räknas om från USD till SEK med hämtad USD/SEK-kurs. Aktier utan användbar kursdata SHALL hoppas över utan att stoppa övriga diagrammet.
 
 #### Scenario: Starta diagrammet
 
@@ -44,6 +44,15 @@ Appen SHALL hämta justerade stängningskurser från Yahoo Finance med historik 
 - **WHEN** en ticker inte ger användbara kursdata
 - **THEN** appen meddelar i terminalen att den aktien hoppas över
 - **AND** övriga tillgängliga aktier visas normalt
+
+#### Scenario: Hämta nya slutkurser utan omstart
+
+- **WHEN** användaren klickar på knappen för senaste slutkurser
+- **THEN** appen hämtar Yahoo Finance-data senare än den senast inlästa dagen
+- **AND** kurser inkluderas först efter respektive börsstängning och en kort publiceringsmarginal
+- **AND** nya kurser läggs till i diagrammet, rangeslidern och resultatberäkningen utan att sidan eller Python-appen startas om
+- **WHEN** ingen senare slutkurs finns
+- **THEN** appen meddelar att ingen ny slutkurs är tillgänglig
 
 ### Requirement: Kurvornas synlighet och legend
 

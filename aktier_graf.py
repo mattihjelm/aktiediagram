@@ -1,11 +1,12 @@
 """Jämför ABB.ST, BRK-B och SCA-B.ST i ett gemensamt diagram."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 import csv
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import webbrowser
 
 import pandas as pd
@@ -22,9 +23,7 @@ PLOT_COLORS = [
 ]
 START_DATE = "2010-01-01"
 INITIAL_VISIBLE_START = pd.Timestamp("2020-01-01")
-# Yahoo Finance använder ett exklusivt slutdatum. I morgon gör att dagens data
-# kan komma med när den finns tillgänglig.
-END_DATE = (date.today() + timedelta(days=1)).isoformat()
+US_MARKET_TICKERS = {"BRK-B", "NDAQ", "SIRI", "RIVN"}
 
 
 def load_stocks() -> list[dict[str, str | bool]]:
@@ -89,6 +88,22 @@ def currency_for_ticker(ticker: str) -> str:
     return ""
 
 
+def latest_closed_market_date(ticker: str) -> date:
+    """Return the latest weekday after that market's close has had time to publish."""
+    if ticker in US_MARKET_TICKERS:
+        now = datetime.now(ZoneInfo("America/New_York"))
+        close_buffer = time(16, 30)
+    else:
+        now = datetime.now(ZoneInfo("Europe/Stockholm"))
+        close_buffer = time(17, 50)
+    latest = now.date()
+    if latest.weekday() >= 5 or now.time().replace(tzinfo=None) < close_buffer:
+        latest -= timedelta(days=1)
+    while latest.weekday() >= 5:
+        latest -= timedelta(days=1)
+    return latest
+
+
 def quantity_in_current_shares(ticker: str, transaction_date: str, quantity: float) -> float:
     """Convert historic share counts to the share basis used by current prices."""
     # Old Sirius XM shares became 0.1 New Sirius shares on 2024-09-10.
@@ -122,6 +137,9 @@ def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: 
   body { margin: 0; }
   #stock-chart-layout { display: flex; flex-direction: column; gap: 8px; padding: 0 12px; }
   #stock-chart-title { margin: 12px 0 0; font: 600 24px sans-serif; color: #2a3f5f; }
+  #refresh-controls { display: flex; align-items: center; gap: 10px; font: 14px sans-serif; }
+  #refresh-data-button { padding: 7px 11px; cursor: pointer; }
+  #refresh-data-status { color: #435064; }
   #stock-chart-viewport { display: flex; align-items: stretch; gap: 14px; width: 100%; min-width: 0; }
   #stock-chart-viewport > .plotly-graph-div { box-sizing: border-box; flex: 1 1 auto; width: 0 !important; min-width: 0; height: 82vh !important; min-height: 650px; }
   #stock-custom-legend { box-sizing: border-box; flex: 0 0 clamp(330px, 31vw, 460px); max-height: max(650px, 82vh); overflow: auto; padding: 46px 8px 10px 0; font: 14px sans-serif; }
@@ -167,6 +185,16 @@ chartLayout.id = 'stock-chart-layout';
 const chartTitle = document.createElement('h1');
 chartTitle.id = 'stock-chart-title';
 chartTitle.textContent = 'Aktiernas utveckling (index 100 vid synligt startdatum)';
+const refreshControls = document.createElement('div');
+refreshControls.id = 'refresh-controls';
+const refreshButton = document.createElement('button');
+refreshButton.id = 'refresh-data-button';
+refreshButton.type = 'button';
+refreshButton.textContent = 'Hämta senaste slutkurser';
+const refreshStatus = document.createElement('span');
+refreshStatus.id = 'refresh-data-status';
+refreshStatus.setAttribute('role', 'status');
+refreshControls.append(refreshButton, refreshStatus);
 const purchaseList = document.createElement('section');
 purchaseList.id = 'purchase-list';
 purchaseList.innerHTML = '<h2>Registrerade aktieköp</h2><div id="purchase-list-content"></div>';
@@ -176,7 +204,7 @@ const customLegend = document.createElement('aside');
 customLegend.id = 'stock-custom-legend';
 customLegend.setAttribute('aria-label', 'Aktielegend');
 purchaseGraph.parentNode.insertBefore(chartLayout, purchaseGraph);
-chartLayout.append(chartTitle, purchasePanel, chartViewport, purchaseList);
+chartLayout.append(chartTitle, refreshControls, purchasePanel, chartViewport, purchaseList);
 chartViewport.append(purchaseGraph, customLegend);
 function finishStockChartLayout(attempt = 0) {
   if (window.renderCustomLegend && window.rebaseVisibleStockGraph) {
@@ -192,6 +220,8 @@ finishStockChartLayout();
 const purchaseForm = document.getElementById('purchase-form');
 const purchaseStatus = document.getElementById('purchase-status');
 const purchaseTotal = document.getElementById('purchase-total');
+const refreshDataButton = document.getElementById('refresh-data-button');
+const refreshDataStatus = document.getElementById('refresh-data-status');
 function parsePurchaseNumber(value) {
   const normalized = String(value).trim().replace(/\s/g, '').replace(',', '.');
   return normalized ? Number(normalized) : NaN;
@@ -296,6 +326,55 @@ window.renderPurchaseList = function() {
   container.append(table);
 };
 window.renderPurchaseList();
+refreshDataButton.addEventListener('click', async () => {
+  refreshDataButton.disabled = true;
+  refreshDataStatus.textContent = 'Hämtar slutkurser från Yahoo Finance…';
+  try {
+    const response = await fetch('/api/refresh', {method: 'POST'});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Kursdata kunde inte hämtas.');
+    const indices = [];
+    const payload = {x: [], y: [], customdata: []};
+    const updatedTickers = [];
+    let latestDate = '';
+    Object.entries(result.updates || {}).forEach(([ticker, update]) => {
+      const traceIndex = window.stockGraphState.stockTraceByTicker[ticker];
+      if (traceIndex === undefined || !update.x || !update.x.length) return;
+      const trace = purchaseGraph.data[traceIndex];
+      const lastDate = String(trace.x[trace.x.length - 1]).slice(0, 10);
+      const newPoints = update.x.map((date, index) => ({date, price: update.prices[index], customdata: update.customdata[index]}))
+        .filter(point => String(point.date).slice(0, 10) > lastDate);
+      if (!newPoints.length) return;
+      const base = Number(window.stockGraphState.visibleBases[traceIndex]) || Number(trace.customdata[0][0]);
+      indices.push(traceIndex);
+      payload.x.push(newPoints.map(point => point.date));
+      payload.y.push(newPoints.map(point => Number(point.price) / base * 100));
+      payload.customdata.push(newPoints.map(point => point.customdata));
+      updatedTickers.push(ticker);
+      latestDate = newPoints.reduce((latest, point) => String(point.date).slice(0, 10) > latest ? String(point.date).slice(0, 10) : latest, latestDate);
+    });
+    if (indices.length) {
+      await Plotly.extendTraces(purchaseGraph, payload, indices);
+      const allStockTraces = purchaseGraph.data.filter(trace => trace.meta && trace.meta.role === 'stock');
+      const firstDate = allStockTraces.reduce((first, trace) => String(trace.x[0]).slice(0, 10) < first ? String(trace.x[0]).slice(0, 10) : first, '9999-12-31');
+      const lastDate = allStockTraces.reduce((last, trace) => String(trace.x[trace.x.length - 1]).slice(0, 10) > last ? String(trace.x[trace.x.length - 1]).slice(0, 10) : last, '0000-01-01');
+      await Plotly.relayout(purchaseGraph, {'xaxis.rangeslider.range': [firstDate, lastDate]});
+      updatedTickers.forEach(ticker => window.refreshProfitLabel(ticker, false));
+      window.renderCustomLegend();
+      window.rebaseVisibleStockGraph({});
+      refreshDataStatus.textContent = `${indices.length} aktier uppdaterade med slutkurser t.o.m. ${latestDate}.`;
+    } else {
+      refreshDataStatus.textContent = 'Inga senare slutkurser tillgängliga ännu.';
+    }
+    if (result.warnings && result.warnings.length) {
+      refreshDataStatus.textContent += ` ${result.warnings.join(' ')}`;
+    }
+  } catch (error) {
+    refreshDataStatus.textContent = error.message;
+  } finally {
+    refreshDataButton.disabled = false;
+  }
+});
 purchaseForm.addEventListener('submit', async event => {
   event.preventDefault();
   const purchase = {
@@ -369,6 +448,88 @@ def run_local_chart_server(
             self.wfile.write(body)
 
         def do_POST(self) -> None:
+            if self.path == "/api/refresh":
+                try:
+                    updates: dict[str, dict[str, list]] = {}
+                    warnings: list[str] = []
+                    usdsek_close = None
+                    brk_series = price_series_by_ticker.get("BRK-B")
+                    if brk_series is not None:
+                        fx_start = pd.Timestamp(brk_series.index[-1]).date().isoformat()
+                        fx_end = (latest_closed_market_date("BRK-B") + timedelta(days=1)).isoformat()
+                        fx_data = yf.download(
+                            "USDSEK=X", start=fx_start, end=fx_end,
+                            auto_adjust=True, progress=False,
+                        )
+                        if not fx_data.empty and "Close" in fx_data:
+                            usdsek_close = fx_data["Close"]
+                            if isinstance(usdsek_close, pd.DataFrame):
+                                usdsek_close = usdsek_close.iloc[:, 0]
+                            if getattr(usdsek_close.index, "tz", None) is not None:
+                                usdsek_close.index = usdsek_close.index.tz_localize(None)
+                            usdsek_close.index = pd.to_datetime(usdsek_close.index).normalize()
+                            usdsek_close = usdsek_close.dropna().sort_index()
+
+                    for stock in stocks:
+                        ticker = stock["ticker"]
+                        existing = price_series_by_ticker.get(ticker)
+                        if existing is None or existing.empty:
+                            continue
+                        try:
+                            if getattr(existing.index, "tz", None) is not None:
+                                existing.index = existing.index.tz_localize(None)
+                            existing.index = pd.to_datetime(existing.index).normalize()
+                            start = pd.Timestamp(existing.index[-1]).date().isoformat()
+                            latest_closed_date = latest_closed_market_date(ticker)
+                            end = (latest_closed_date + timedelta(days=1)).isoformat()
+                            data = yf.download(
+                                ticker, start=start, end=end,
+                                auto_adjust=True, progress=False,
+                            )
+                            if data.empty or "Close" not in data:
+                                continue
+                            close = data["Close"]
+                            if isinstance(close, pd.DataFrame):
+                                close = close.iloc[:, 0]
+                            if getattr(close.index, "tz", None) is not None:
+                                close.index = close.index.tz_localize(None)
+                            close.index = pd.to_datetime(close.index).normalize()
+                            close = close.dropna().sort_index()
+                            if ticker == "BRK-B":
+                                if usdsek_close is None:
+                                    warnings.append("USD/SEK-data saknades; Berkshire uppdaterades inte.")
+                                    continue
+                                fx_rates = usdsek_close.reindex(close.index, method="ffill")
+                                close = (close * fx_rates).dropna()
+                            close = close.loc[
+                                (close.index.date <= latest_closed_date)
+                                & (close.index.date > existing.index[-1].date())
+                            ]
+                            if close.empty:
+                                continue
+                            combined = pd.concat([existing, close]).sort_index()
+                            combined = combined[~combined.index.duplicated(keep="last")]
+                            price_series_by_ticker[ticker] = combined
+                            currency = currency_for_ticker(ticker)
+                            updates[ticker] = {
+                                "x": [index.strftime("%Y-%m-%d") for index in close.index],
+                                "prices": [float(value) for value in close.values],
+                                "customdata": [
+                                    [
+                                        float(value),
+                                        f"{float(value):,.2f}".replace(",", " ").replace(".", ",")
+                                        + (f" {currency}" if currency else ""),
+                                        1.0,
+                                    ]
+                                    for value in close.values
+                                ],
+                            }
+                        except Exception as error:
+                            warnings.append(f"{ticker}: kursuppdateringen misslyckades ({error}).")
+                    self.send_json(200, {"updates": updates, "warnings": warnings})
+                except Exception as error:
+                    self.send_json(500, {"error": f"Kunde inte hämta slutkurser: {error}"})
+                return
             if self.path != "/api/purchases":
                 self.send_error(404)
                 return
@@ -447,7 +608,7 @@ def run_local_chart_server(
             except Exception as error:
                 self.send_json(500, {"error": f"Kunde inte spara köpet: {error}"})
 
-        def send_json(self, status: int, value: dict[str, str | float]) -> None:
+        def send_json(self, status: int, value: dict[str, object]) -> None:
             body = json.dumps(value, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -480,7 +641,8 @@ def main() -> None:
     usdsek_close = None
 
     if any(stock["ticker"] == "BRK-B" for stock in stocks):
-        fx_data = yf.download("USDSEK=X", start=START_DATE, end=END_DATE, auto_adjust=True, progress=False)
+        fx_end = (latest_closed_market_date("BRK-B") + timedelta(days=1)).isoformat()
+        fx_data = yf.download("USDSEK=X", start=START_DATE, end=fx_end, auto_adjust=True, progress=False)
         if not fx_data.empty and "Close" in fx_data:
             usdsek_close = fx_data["Close"]
             if isinstance(usdsek_close, pd.DataFrame):
@@ -490,10 +652,11 @@ def main() -> None:
     for stock in stocks:
         ticker = stock["ticker"]
         label = stock["name"]
+        end = (latest_closed_market_date(ticker) + timedelta(days=1)).isoformat()
         data = yf.download(
             ticker,
             start=START_DATE,
-            end=END_DATE,
+            end=end,
             auto_adjust=True,
             progress=False,
         )
@@ -900,7 +1063,7 @@ window.suggestPurchasePrice = function() {
   }
 };
 const swedishNumber = value => Number(value).toLocaleString('sv-SE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-function refreshProfitLabel(ticker) {
+function refreshProfitLabel(ticker, render = true) {
   const stockIndex = stockTraceByTicker[ticker];
   if (stockIndex === undefined) return;
   const stockTrace = graph.data[stockIndex];
@@ -953,7 +1116,7 @@ function refreshProfitLabel(ticker) {
     : `${signed(monthlyProfit)} ${currency}/mån · ${signed(monthlyPercent)}%/mån`;
   const profitText = `${signed(profit)} ${currency}`;
   stockTrace.meta.profitLabel = `${profitText} · ${monthText}`;
-  window.renderCustomLegend();
+  if (render) window.renderCustomLegend();
 }
 window.refreshProfitLabel = refreshProfitLabel;
 function comparisonOverlays(targetYRange) {
