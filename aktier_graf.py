@@ -137,8 +137,12 @@ def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: 
   body { margin: 0; }
   #stock-chart-layout { display: flex; flex-direction: column; gap: 8px; padding: 0 12px; }
   #stock-chart-title { margin: 12px 0 0; font: 600 24px sans-serif; color: #2a3f5f; }
-  #refresh-controls { display: flex; align-items: center; gap: 10px; font: 14px sans-serif; }
+  #refresh-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font: 14px sans-serif; }
   #refresh-data-button { padding: 7px 11px; cursor: pointer; }
+  #visible-date-controls { display: flex; align-items: end; gap: 8px; }
+  #visible-date-controls label { display: grid; gap: 3px; }
+  #visible-date-controls input { box-sizing: border-box; width: 12ch; padding: 6px; font: inherit; }
+  #visible-date-status { color: #a33; }
   #refresh-data-status { color: #435064; }
   #stock-chart-viewport { display: flex; align-items: stretch; gap: 14px; width: 100%; min-width: 0; }
   #stock-chart-viewport > .plotly-graph-div { box-sizing: border-box; flex: 1 1 auto; width: 0 !important; min-width: 0; height: 82vh !important; min-height: 650px; }
@@ -191,10 +195,34 @@ const refreshButton = document.createElement('button');
 refreshButton.id = 'refresh-data-button';
 refreshButton.type = 'button';
 refreshButton.textContent = 'Hämta senaste slutkurser';
+const visibleDateControls = document.createElement('div');
+visibleDateControls.id = 'visible-date-controls';
+const visibleStartLabel = document.createElement('label');
+visibleStartLabel.textContent = 'Startdatum (ÅÅÅÅ-MM-DD)';
+const visibleStartInput = document.createElement('input');
+visibleStartInput.id = 'visible-start-date';
+visibleStartInput.type = 'text';
+visibleStartInput.inputMode = 'numeric';
+visibleStartInput.maxLength = 10;
+visibleStartInput.placeholder = '2020-01-01';
+visibleStartLabel.append(visibleStartInput);
+const visibleEndLabel = document.createElement('label');
+visibleEndLabel.textContent = 'Slutdatum (ÅÅÅÅ-MM-DD)';
+const visibleEndInput = document.createElement('input');
+visibleEndInput.id = 'visible-end-date';
+visibleEndInput.type = 'text';
+visibleEndInput.inputMode = 'numeric';
+visibleEndInput.maxLength = 10;
+visibleEndInput.placeholder = '2026-10-31';
+visibleEndLabel.append(visibleEndInput);
+visibleDateControls.append(visibleStartLabel, visibleEndLabel);
+const visibleDateStatusElement = document.createElement('span');
+visibleDateStatusElement.id = 'visible-date-status';
+visibleDateStatusElement.setAttribute('role', 'status');
 const refreshStatus = document.createElement('span');
 refreshStatus.id = 'refresh-data-status';
 refreshStatus.setAttribute('role', 'status');
-refreshControls.append(refreshButton, refreshStatus);
+refreshControls.append(refreshButton, visibleDateControls, visibleDateStatusElement, refreshStatus);
 const purchaseList = document.createElement('section');
 purchaseList.id = 'purchase-list';
 purchaseList.innerHTML = '<h2>Registrerade aktieköp</h2><div id="purchase-list-content"></div>';
@@ -222,6 +250,44 @@ const purchaseStatus = document.getElementById('purchase-status');
 const purchaseTotal = document.getElementById('purchase-total');
 const refreshDataButton = document.getElementById('refresh-data-button');
 const refreshDataStatus = document.getElementById('refresh-data-status');
+const visibleStartDate = document.getElementById('visible-start-date');
+const visibleEndDate = document.getElementById('visible-end-date');
+const visibleDateStatus = document.getElementById('visible-date-status');
+function toIsoDate(value) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : '';
+}
+const initialAxisRange = purchaseGraph.layout.xaxis.range;
+const sliderDataRange = purchaseGraph.layout.xaxis.rangeslider.range;
+const allowedStartDate = toIsoDate(sliderDataRange[0]);
+const allowedEndDate = toIsoDate(initialAxisRange[1]);
+function isIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+function applyVisibleDateRange() {
+  const start = visibleStartDate.value.trim();
+  const end = visibleEndDate.value.trim();
+  if (!isIsoDate(start) || !isIsoDate(end)) {
+    visibleDateStatus.textContent = 'Ange datum i formatet ÅÅÅÅ-MM-DD.';
+    return;
+  }
+  if (start < allowedStartDate || end > allowedEndDate) {
+    visibleDateStatus.textContent = `Välj datum mellan ${allowedStartDate} och ${allowedEndDate}.`;
+    return;
+  }
+  if (start >= end) {
+    visibleDateStatus.textContent = 'Startdatum måste vara före slutdatum.';
+    return;
+  }
+  visibleDateStatus.textContent = '';
+  Plotly.relayout(purchaseGraph, {'xaxis.range': [start, end]});
+}
+visibleStartDate.addEventListener('change', applyVisibleDateRange);
+visibleEndDate.addEventListener('change', applyVisibleDateRange);
+if (window.syncVisibleDateInputs) window.syncVisibleDateInputs();
 function parsePurchaseNumber(value) {
   const normalized = String(value).trim().replace(/\s/g, '').replace(',', '.');
   return normalized ? Number(normalized) : NaN;
@@ -1466,8 +1532,31 @@ graph.addEventListener('dblclick', event => {
   comparisons.length = 0;
   Plotly.relayout(graph, comparisonOverlays());
 });
+window.syncVisibleDateInputs = function(range) {
+  const startField = document.getElementById('visible-start-date');
+  const endField = document.getElementById('visible-end-date');
+  if (!startField || !endField) return;
+  const activeRange = range || (graph._fullLayout && graph._fullLayout.xaxis && graph._fullLayout.xaxis.range);
+  if (!activeRange || activeRange.length < 2) return;
+  const asIsoDate = value => {
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : '';
+  };
+  startField.value = asIsoDate(activeRange[0]);
+  endField.value = asIsoDate(activeRange[1]);
+  const status = document.getElementById('visible-date-status');
+  if (status) status.textContent = '';
+};
 graph.on('plotly_relayout', eventData => {
   if (!eventData || !Object.keys(eventData).some(key => key.startsWith('xaxis.'))) return;
+  let range = eventData['xaxis.range'];
+  if (!Array.isArray(range) && (eventData['xaxis.range[0]'] || eventData['xaxis.range[1]'])) {
+    const activeRange = graph._fullLayout && graph._fullLayout.xaxis && graph._fullLayout.xaxis.range;
+    range = [eventData['xaxis.range[0]'] || (activeRange && activeRange[0]),
+      eventData['xaxis.range[1]'] || (activeRange && activeRange[1])];
+  }
+  if (window.syncVisibleDateInputs) window.syncVisibleDateInputs(range);
   clearTimeout(rebaseTimer);
   rebaseTimer = setTimeout(() => rebaseToVisibleStart(eventData), 100);
 });

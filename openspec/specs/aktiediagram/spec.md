@@ -39,6 +39,15 @@ Appen SHALL hämta justerade dagskurser från Yahoo Finance med historik från 2
 - **AND** köp- och säljmarkeringarnas höjd räknas om mot samma indexbas
 - **AND** y-axeln anpassas efter de synliga kurvorna
 
+#### Scenario: Ange synliga datum direkt
+
+- **WHEN** användaren anger start- och slutdatum i ISO-formatet `ÅÅÅÅ-MM-DD`
+- **THEN** diagrammets synliga datumintervall och nedre datumreglage uppdateras till dessa datum
+- **AND** varje aktie indexeras om vid det nya synliga startdatumet
+- **WHEN** användaren i stället flyttar handtagen i datumreglaget
+- **THEN** start- och slutdatumfälten uppdateras så att de motsvarar det synliga intervallet
+- **AND** ogiltiga datum, datum utanför tillgänglig historik eller startdatum efter slutdatum accepteras inte
+
 #### Scenario: Historik saknas för en aktie
 
 - **WHEN** en ticker inte ger användbara kursdata
