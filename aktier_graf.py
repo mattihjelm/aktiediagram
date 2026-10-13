@@ -24,6 +24,7 @@ PLOT_COLORS = [
 START_DATE = "2010-01-01"
 INITIAL_VISIBLE_START = pd.Timestamp("2020-01-01")
 US_MARKET_TICKERS = {"BRK-B", "NDAQ", "SIRI", "RIVN"}
+FX_TICKERS = {"USD": "USDSEK=X", "EUR": "EURSEK=X"}
 
 
 def load_stocks() -> list[dict[str, str | bool]]:
@@ -86,6 +87,39 @@ def currency_for_ticker(ticker: str) -> str:
     if ticker == "RHM.DE":
         return "EUR"
     return ""
+
+
+def fx_currency_for_ticker(ticker: str) -> str:
+    if ticker == "BRK-B":
+        return "SEK"
+    if ticker in US_MARKET_TICKERS - {"BRK-B"}:
+        return "USD"
+    if ticker == "RHM.DE":
+        return "EUR"
+    return "SEK"
+
+
+def fx_rate_to_sek(
+    ticker: str,
+    on_date: str | date | pd.Timestamp,
+    rates_by_currency: dict[str, pd.Series],
+) -> float | None:
+    currency = fx_currency_for_ticker(ticker)
+    if currency == "SEK":
+        return 1.0
+    rates = rates_by_currency.get(currency)
+    if rates is None or rates.empty:
+        return None
+    rates_index = rates.index
+    if getattr(rates_index, "tz", None) is not None:
+        rates_index = rates_index.tz_localize(None)
+    cutoff = pd.Timestamp(on_date)
+    if cutoff.tzinfo is not None:
+        cutoff = cutoff.tz_localize(None)
+    eligible = rates.loc[rates_index <= cutoff]
+    if eligible.empty:
+        return None
+    return float(eligible.iloc[-1])
 
 
 def latest_closed_market_date(ticker: str) -> date:
@@ -182,7 +216,16 @@ def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: 
   #purchase-list th { background: #f3f5f8; }
   #purchase-list td.number { text-align: right; font-variant-numeric: tabular-nums; }
   #purchase-list-content { width: max-content; max-width: 100%; overflow-x: auto; }
-  @media (max-width: 900px) { #stock-chart-viewport { flex-direction: column; } #stock-chart-viewport > .plotly-graph-div { flex: none; width: 100% !important; height: 70vh !important; min-height: 520px; } #stock-custom-legend { flex: 0 1 auto; width: 100%; max-height: 280px; padding: 8px; border: 1px solid #e1e5eb; } #top-controls-row { width: calc(100% - 92px); margin-left: 92px; justify-content: flex-start; } #top-controls-row #purchase-panel { max-width: 100%; margin-right: auto; } #purchase-list { max-width: calc(100% - 92px); } #refresh-controls { margin-left: clamp(12px, 3vw, 24px); } #purchase-panel, #purchase-list { margin-left: 92px; } #purchase-form { grid-template-columns: repeat(2, max-content); } #purchase-form button { grid-column: 1 / -1; justify-self: start; } #purchase-total { grid-column: 1 / -1; justify-self: start; margin: 0; } }
+  #transaction-tables { display: flex; align-items: flex-start; gap: 20px; width: calc(100% - 92px); margin: 12px 0 28px 92px; box-sizing: border-box; }
+  #transaction-tables > section { flex: 1 1 50%; min-width: 0; max-width: 50%; margin: 0; padding: 0; border: 0; font: 15px sans-serif; }
+  #transaction-tables #purchase-list { width: auto; max-width: 50%; margin: 0; }
+  #transaction-tables h2 { margin: 0 0 12px; font-size: 19px; }
+  #transaction-tables table { width: max-content; max-width: 100%; border-collapse: collapse; text-align: left; }
+  #transaction-tables th, #transaction-tables td { padding: 7px 9px; border-bottom: 1px solid #e1e5eb; white-space: nowrap; }
+  #transaction-tables th { background: #f3f5f8; }
+  #transaction-tables td.number { text-align: right; font-variant-numeric: tabular-nums; }
+  .transaction-table-content { max-width: 100%; overflow-x: auto; }
+  @media (max-width: 900px) { #stock-chart-viewport { flex-direction: column; } #stock-chart-viewport > .plotly-graph-div { flex: none; width: 100% !important; height: 70vh !important; min-height: 520px; } #stock-custom-legend { flex: 0 1 auto; width: 100%; max-height: 280px; padding: 8px; border: 1px solid #e1e5eb; } #top-controls-row { width: calc(100% - 92px); margin-left: 92px; justify-content: flex-start; } #top-controls-row #purchase-panel { max-width: 100%; margin-right: auto; } #purchase-list { max-width: calc(100% - 92px); } #refresh-controls { margin-left: clamp(12px, 3vw, 24px); } #purchase-panel, #purchase-list { margin-left: 92px; } #transaction-tables { flex-direction: column; width: calc(100% - 92px); margin-left: 92px; } #transaction-tables > section { max-width: 100%; width: 100%; } #purchase-form { grid-template-columns: repeat(2, max-content); } #purchase-form button { grid-column: 1 / -1; justify-self: start; } #purchase-total { grid-column: 1 / -1; justify-self: start; margin: 0; } }
 </style>
 <script>
 const purchaseGraph = document.querySelector('.plotly-graph-div');
@@ -232,13 +275,19 @@ topControlsRow.append(purchasePanel, refreshControls);
 const purchaseList = document.createElement('section');
 purchaseList.id = 'purchase-list';
 purchaseList.innerHTML = '<h2>Registrerade aktieköp</h2><div id="purchase-list-content"></div>';
+const portfolioSummary = document.createElement('section');
+portfolioSummary.id = 'portfolio-summary';
+portfolioSummary.innerHTML = '<h2>Vinst/förlust per aktie</h2><div id="portfolio-summary-content" class="transaction-table-content"></div>';
+const transactionTables = document.createElement('div');
+transactionTables.id = 'transaction-tables';
+transactionTables.append(purchaseList, portfolioSummary);
 const chartViewport = document.createElement('div');
 chartViewport.id = 'stock-chart-viewport';
 const customLegend = document.createElement('aside');
 customLegend.id = 'stock-custom-legend';
 customLegend.setAttribute('aria-label', 'Aktielegend');
 purchaseGraph.parentNode.insertBefore(chartLayout, purchaseGraph);
-chartLayout.append(chartTitle, topControlsRow, chartViewport, purchaseList);
+chartLayout.append(chartTitle, topControlsRow, chartViewport, transactionTables);
 chartViewport.append(purchaseGraph, customLegend);
 function finishStockChartLayout(attempt = 0) {
   if (window.renderCustomLegend && window.rebaseVisibleStockGraph) {
@@ -397,7 +446,99 @@ window.renderPurchaseList = function() {
   table.append(body);
   container.append(table);
 };
+window.renderPortfolioSummary = function() {
+  const container = document.getElementById('portfolio-summary-content');
+  if (!container || !purchaseGraph.data) return;
+  const stocks = new Map();
+  const transactions = new Map();
+  purchaseGraph.data.forEach(trace => {
+    if (!trace.meta) return;
+    const ticker = trace.meta.ticker;
+    if (trace.meta.role === 'stock') stocks.set(ticker, trace);
+    if (trace.meta.role === 'purchase') transactions.set(ticker, trace);
+  });
+  const number = value => Number(String(value ?? '').replace(/\s/g, '').replace(',', '.'));
+  const money = value => Number(value).toLocaleString('sv-SE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  const amount = value => Number(value).toLocaleString('sv-SE', {maximumFractionDigits: 4});
+  const currencyFor = ticker => ticker.endsWith('.ST') || ticker === 'BRK-B' ? 'kr'
+    : (['NDAQ', 'SIRI', 'RIVN'].includes(ticker) ? 'USD' : (ticker === 'RHM.DE' ? 'EUR' : ''));
+  const rows = [];
+  transactions.forEach((trace, ticker) => {
+    const stock = stocks.get(ticker);
+    if (!stock || !trace.x.length) return;
+    const currency = currencyFor(ticker);
+    const events = trace.x.map((date, index) => ({date: String(date).slice(0, 10), details: trace.customdata[index]}))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    let held = 0, localBasis = 0, sekBasis = 0, totalBuyCostSek = 0, realizedSek = 0, fxMissing = false;
+    events.forEach(({date, details}) => {
+      const price = number(details[1]), enteredQuantity = number(details[2]);
+      const quantity = ticker === 'SIRI' && date < '2024-09-10' ? enteredQuantity / 10 : enteredQuantity;
+      const commission = number(details[5] || 0) || 0;
+      const fx = Number(details[7]);
+      if (!(price > 0 && enteredQuantity > 0)) return;
+      if (!Number.isFinite(fx) || fx <= 0) fxMissing = true;
+      const rate = Number.isFinite(fx) && fx > 0 ? fx : (currency === 'kr' ? 1 : null);
+      if ((details[6] || 'KÖP') === 'SÄLJ') {
+        if (rate !== null) realizedSek += (price * enteredQuantity - commission) * rate;
+        const removed = Math.min(quantity, held);
+        if (held > 0 && removed > 0) {
+          const fraction = removed / held;
+          if (rate !== null) realizedSek -= sekBasis * fraction;
+          localBasis *= 1 - fraction;
+          sekBasis *= 1 - fraction;
+          held -= removed;
+        }
+      } else {
+        const localCost = price * enteredQuantity + commission;
+        held += quantity;
+        localBasis += localCost;
+        if (rate === null) fxMissing = true;
+        else { sekBasis += localCost * rate; totalBuyCostSek += localCost * rate; }
+      }
+    });
+    const latestIndex = stock.x.length - 1;
+    const latestData = stock.customdata[latestIndex] || [];
+    const latestPrice = Number(latestData[0]);
+    const currentFx = Number(latestData[3]);
+    const validFx = Number.isFinite(currentFx) && currentFx > 0;
+    const profitSek = validFx && !fxMissing ? realizedSek + latestPrice * currentFx * held - sekBasis : null;
+    const profitPercent = profitSek !== null && totalBuyCostSek > 0 ? profitSek / totalBuyCostSek * 100 : null;
+    rows.push({
+      name: stock.meta.displayName || ticker,
+      date: String(stock.x[latestIndex]).slice(0, 10),
+      quantity: amount(held),
+      price: latestData[1] || `${money(latestPrice)}${currency ? ` ${currency}` : ''}`,
+      gav: `${held > 0 ? money(localBasis / held) : '—'}${held > 0 && currency ? ` ${currency}` : ''}`,
+      profit: profitSek === null ? '—' : `${profitSek > 0 ? '+' : ''}${money(profitSek)} kr`,
+      percent: profitPercent === null ? '—' : `${profitPercent > 0 ? '+' : ''}${money(profitPercent)}%`,
+    });
+  });
+  rows.sort((a, b) => a.name.localeCompare(b.name, 'sv'));
+  container.replaceChildren();
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.textContent = 'Inga aktier med registrerade transaktioner.';
+    container.append(empty);
+    return;
+  }
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>Aktie</th><th>Datum</th><th>Antal</th><th>Senaste kurs</th><th>GAV (genomsnittligt anskaffningsvärde)</th><th>Resultat (kr)</th><th>Resultat (%)</th></tr></thead>';
+  const body = document.createElement('tbody');
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    [row.name, row.date, row.quantity, row.price, row.gav, row.profit, row.percent].forEach((value, index) => {
+      const td = document.createElement('td');
+      td.textContent = value;
+      if (index > 1) td.className = 'number';
+      tr.append(td);
+    });
+    body.append(tr);
+  });
+  table.append(body);
+  container.append(table);
+};
 window.renderPurchaseList();
+window.renderPortfolioSummary();
 refreshDataButton.addEventListener('click', async () => {
   refreshDataButton.disabled = true;
   refreshDataStatus.textContent = 'Hämtar slutkurser från Yahoo Finance…';
@@ -433,6 +574,7 @@ refreshDataButton.addEventListener('click', async () => {
       await Plotly.relayout(purchaseGraph, {'xaxis.rangeslider.range': [firstDate, lastDate]});
       updatedTickers.forEach(ticker => window.refreshProfitLabel(ticker, false));
       window.renderCustomLegend();
+      window.renderPortfolioSummary();
       window.rebaseVisibleStockGraph({});
       refreshDataStatus.textContent = `${indices.length} aktier uppdaterade med slutkurser t.o.m. ${latestDate}.`;
     } else {
@@ -478,11 +620,12 @@ purchaseForm.addEventListener('submit', async event => {
     await Plotly.extendTraces(purchaseGraph, {
       x: [[result.date]],
       y: [[result.chart_price / base * 100]],
-      customdata: [[[result.chart_price, result.price, result.quantity, result.ticker, result.currency, result.commission, result.transaction_type]]],
+      customdata: [[[result.chart_price, result.price, result.quantity, result.ticker, result.currency, result.commission, result.transaction_type, result.sek_fx_rate]]],
       'marker.symbol': [[result.transaction_type === 'KÖP' ? 'circle' : 'triangle-down']],
     }, [markerIndex]);
     if (window.refreshProfitLabel) window.refreshProfitLabel(result.ticker);
     window.renderPurchaseList();
+    window.renderPortfolioSummary();
     purchaseStatus.textContent = `${result.name}: ${result.transaction_type.toLowerCase()} ${result.quantity} st ${result.date} för ${result.price} ${result.currency} + ${result.commission} ${result.currency} courtage. Sparat i aktiekop.csv.`;
     document.getElementById('purchase-quantity').value = '';
     document.getElementById('purchase-price').value = '';
@@ -501,6 +644,7 @@ def run_local_chart_server(
     chart_html: str,
     stocks: list[dict[str, str | bool]],
     price_series_by_ticker: dict[str, pd.Series],
+    fx_rates_by_currency: dict[str, pd.Series],
 ) -> None:
     """Servera diagrammet lokalt så köpformuläret kan spara CSV-filen."""
     available_tickers = set(price_series_by_ticker)
@@ -524,23 +668,23 @@ def run_local_chart_server(
                 try:
                     updates: dict[str, dict[str, list]] = {}
                     warnings: list[str] = []
-                    usdsek_close = None
-                    brk_series = price_series_by_ticker.get("BRK-B")
-                    if brk_series is not None:
-                        fx_start = pd.Timestamp(brk_series.index[-1]).date().isoformat()
-                        fx_end = (latest_closed_market_date("BRK-B") + timedelta(days=1)).isoformat()
-                        fx_data = yf.download(
-                            "USDSEK=X", start=fx_start, end=fx_end,
-                            auto_adjust=True, progress=False,
-                        )
-                        if not fx_data.empty and "Close" in fx_data:
-                            usdsek_close = fx_data["Close"]
-                            if isinstance(usdsek_close, pd.DataFrame):
-                                usdsek_close = usdsek_close.iloc[:, 0]
-                            if getattr(usdsek_close.index, "tz", None) is not None:
-                                usdsek_close.index = usdsek_close.index.tz_localize(None)
-                            usdsek_close.index = pd.to_datetime(usdsek_close.index).normalize()
-                            usdsek_close = usdsek_close.dropna().sort_index()
+                    for currency, fx_ticker in FX_TICKERS.items():
+                        existing_fx = fx_rates_by_currency.get(currency)
+                        if existing_fx is None or existing_fx.empty:
+                            continue
+                        ref_ticker = "NDAQ" if currency == "USD" else "RHM.DE"
+                        fx_start = pd.Timestamp(existing_fx.index[-1]).date().isoformat()
+                        fx_end = (latest_closed_market_date(ref_ticker) + timedelta(days=1)).isoformat()
+                        fx_data = yf.download(fx_ticker, start=fx_start, end=fx_end, auto_adjust=True, progress=False)
+                        if fx_data.empty or "Close" not in fx_data:
+                            continue
+                        rates = fx_data["Close"]
+                        if isinstance(rates, pd.DataFrame): rates = rates.iloc[:, 0]
+                        if getattr(rates.index, "tz", None) is not None: rates.index = rates.index.tz_localize(None)
+                        rates.index = pd.to_datetime(rates.index).normalize()
+                        rates = rates.dropna().sort_index()
+                        combined_rates = pd.concat([existing_fx, rates]).sort_index()
+                        fx_rates_by_currency[currency] = combined_rates[~combined_rates.index.duplicated(keep="last")]
 
                     for stock in stocks:
                         ticker = stock["ticker"]
@@ -568,6 +712,7 @@ def run_local_chart_server(
                             close.index = pd.to_datetime(close.index).normalize()
                             close = close.dropna().sort_index()
                             if ticker == "BRK-B":
+                                usdsek_close = fx_rates_by_currency.get("USD")
                                 if usdsek_close is None:
                                     warnings.append("USD/SEK-data saknades; Berkshire uppdaterades inte.")
                                     continue
@@ -592,8 +737,9 @@ def run_local_chart_server(
                                         f"{float(value):,.2f}".replace(",", " ").replace(".", ",")
                                         + (f" {currency}" if currency else ""),
                                         1.0,
+                                        fx_rate_to_sek(ticker, index, fx_rates_by_currency),
                                     ]
-                                    for value in close.values
+                                    for index, value in close.items()
                                 ],
                             }
                         except Exception as error:
@@ -673,6 +819,7 @@ def run_local_chart_server(
                     "currency": currency_for_ticker(ticker),
                     "chart_price": float(earlier_prices.iloc[-1]),
                     "commission": commission_text,
+                    "sek_fx_rate": fx_rate_to_sek(ticker, purchase_date, fx_rates_by_currency),
                 }
                 self.send_json(200, result)
             except (ValueError, InvalidOperation, json.JSONDecodeError) as error:
@@ -710,16 +857,18 @@ def main() -> None:
     stocks = load_stocks()
     purchases = load_purchases()
     price_series_by_ticker = {}
-    usdsek_close = None
-
-    if any(stock["ticker"] == "BRK-B" for stock in stocks):
-        fx_end = (latest_closed_market_date("BRK-B") + timedelta(days=1)).isoformat()
-        fx_data = yf.download("USDSEK=X", start=START_DATE, end=fx_end, auto_adjust=True, progress=False)
+    fx_rates_by_currency: dict[str, pd.Series] = {}
+    required_fx = {fx_currency_for_ticker(stock["ticker"]) for stock in stocks} - {"SEK"}
+    for currency in required_fx:
+        ref_ticker = "NDAQ" if currency == "USD" else "RHM.DE"
+        fx_end = (latest_closed_market_date(ref_ticker) + timedelta(days=1)).isoformat()
+        fx_data = yf.download(FX_TICKERS[currency], start=START_DATE, end=fx_end, auto_adjust=True, progress=False)
         if not fx_data.empty and "Close" in fx_data:
-            usdsek_close = fx_data["Close"]
-            if isinstance(usdsek_close, pd.DataFrame):
-                usdsek_close = usdsek_close.iloc[:, 0]
-            usdsek_close = usdsek_close.dropna().sort_index()
+            rates = fx_data["Close"]
+            if isinstance(rates, pd.DataFrame): rates = rates.iloc[:, 0]
+            if getattr(rates.index, "tz", None) is not None: rates.index = rates.index.tz_localize(None)
+            rates.index = pd.to_datetime(rates.index).normalize()
+            fx_rates_by_currency[currency] = rates.dropna().sort_index()
 
     for stock in stocks:
         ticker = stock["ticker"]
@@ -748,6 +897,7 @@ def main() -> None:
             continue
 
         if ticker == "BRK-B":
+            usdsek_close = fx_rates_by_currency.get("USD")
             if usdsek_close is None:
                 print("Kunde inte hämta USD/SEK-data för Berkshire; serien hoppas över.")
                 continue
@@ -788,8 +938,9 @@ def main() -> None:
                         f"{float(value):,.2f}".replace(",", " ").replace(".", ",")
                         + (f" {currency}" if currency else ""),
                         1.0,
+                        fx_rate_to_sek(stock["ticker"], index, fx_rates_by_currency),
                     ]
-                    for value in series
+                    for index, value in series.items()
                 ],
                 mode="lines",
                 cliponaxis=False,
@@ -828,6 +979,7 @@ def main() -> None:
                 "commission": str(commission),
                 "transaction_type": (purchase.get("transaction_type") or "KÖP").upper(),
                 "currency": currency_for_ticker(ticker),
+                "sek_fx_rate": fx_rate_to_sek(ticker, purchase_date, fx_rates_by_currency),
             })
 
     for stock in stocks:
@@ -844,7 +996,7 @@ def main() -> None:
                 customdata=[
                     [
                         purchase["chart_price"], purchase["price"],
-                        purchase["quantity"], ticker, purchase["currency"], purchase["commission"], purchase.get("transaction_type", "KÖP"),
+                        purchase["quantity"], ticker, purchase["currency"], purchase["commission"], purchase.get("transaction_type", "KÖP"), purchase.get("sek_fx_rate"),
                     ]
                     for purchase in markers
                 ],
@@ -1590,7 +1742,7 @@ setTimeout(() => window.renderPurchaseList && window.renderPurchaseList(), 0);
         post_script=post_script,
         config={"doubleClick": False},
     )
-    run_local_chart_server(chart_html, stocks, price_series_by_ticker)
+    run_local_chart_server(chart_html, stocks, price_series_by_ticker, fx_rates_by_currency)
 
 
 if __name__ == "__main__":

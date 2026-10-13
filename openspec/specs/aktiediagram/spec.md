@@ -162,6 +162,23 @@ För aktier med registrerade köp SHALL den externa legenden visa uppskattad vin
 - **WHEN** ett köp eller en försäljning sparas
 - **THEN** vinst/förlustetiketten för den berörda aktien räknas om
 
+### Requirement: Visa aktuell portföljställning bredvid transaktionslistan
+
+Under diagrammet SHALL en sammanställning visas till höger om listan `Registrerade aktieköp`, med en rad per aktie som har registrerade transaktioner. Tabellen SHALL visa aktiens namn, datum för senast tillgängliga dags-slutkurs, kvarvarande antal, senaste kurs, GAV (genomsnittligt anskaffningsvärde inklusive courtage), resultat i SEK och resultat i procent. Resultatet SHALL inkludera realiserad vinst/förlust från registrerade försäljningar och orealiserad vinst/förlust från kvarvarande aktier. GAV SHALL räknas med viktat genomsnittligt anskaffningsvärde, inklusive courtage. Utländska köp SHALL räknas om till SEK med valutakurs för transaktionsdagen eller närmast föregående tillgängliga valutadag; marknadsvärdet SHALL räknas om med kurs för senaste tillgängliga stängningsdag eller närmast föregående valutadag. Aktiens senaste dagskurs SHALL vara dagens stängningskurs när den finns tillgänglig, annars senast tillgängliga börsdags stängningskurs. Tabellen SHALL uppdateras efter en ny transaktion och efter uppdatering av marknadsdata.
+
+#### Scenario: Visa aktuell ställning från flera köp
+
+- **WHEN** en aktie har en eller flera registrerade köp
+- **THEN** sammanställningen visar senaste stängningsdatum och kurs, kvarvarande antal, GAV samt resultat i kronor och procent
+- **AND** sammanställningen ligger till höger om transaktionslistan på breda skärmar
+- **AND** resultatet räknar med courtage och växelkurs för utländska aktier
+
+#### Scenario: Ta med försäljningar i ställningen
+
+- **WHEN** aktien har registrerade köp och försäljningar
+- **THEN** kvarvarande antal och anskaffningsvärde minskas med sålda aktier enligt viktat genomsnitt
+- **AND** realiserat resultat från försäljningen läggs till orealiserat resultat
+
 ### Requirement: Konvertera mäklarens transaktionsexport
 
 `konvertera_aktiekop.py` SHALL läsa den förväntade UTF-16-kodade tabbseparerade transaktionsexporten från Downloads, mappa kolumnen `Värdepapper` till appens ticker och omvandla köpta/sålda transaktioner till appens CSV-format. ISIN SHALL inte användas som ticker. Berkshire-kursen i källan SHALL omvandlas till SEK med exportens växlingskurs. Dubbletter SHALL hoppas över baserat på datum, typ, ticker, antal, kurs och courtage. Programmet SHALL som standard endast visa en förhandsgranskning och SHALL bara skriva till `aktiekop.csv` med explicit `--apply`.
