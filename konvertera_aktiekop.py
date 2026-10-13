@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Convert a broker transaction export into aktiekop.csv.
+
+Run without arguments for a preview. Pass --apply to import mapped rows.
+"""
+
+import argparse
+import csv
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import os
+from pathlib import Path
+import tempfile
+
+
+SOURCE_FILE = Path.home() / "Downloads" / "transactions-and-notes-export (1).csv"
+TARGET_FILE = Path(__file__).with_name("aktiekop.csv")
+FIELDNAMES = ["date", "transaction_type", "ticker", "quantity", "price", "commission"]
+
+# Match the broker's Värdepapper text exactly. ISIN is deliberately not used.
+SECURITY_TO_TICKER = {
+    "ABB": "ABB.ST", "Addtech": "ADDT-B.ST", "Alfa Laval": "ALFA.ST",
+    "Assa Abloy": "ASSA-B.ST", "AstraZeneca": "AZN.ST", "Atlas Copco": "ATCO-B.ST",
+    "Boliden": "BOL.ST", "Epiroc": "EPI-B.ST", "EQT": "EQT.ST",
+    "Ericsson": "ERIC-B.ST", "Essity": "ESSITY-B.ST", "Evolution": "EVO.ST",
+    "H&M": "HM-B.ST", "Hexagon": "HEXA-B.ST", "Industrivärden": "INDU-C.ST",
+    "Industrivärden C": "INDU-C.ST", "Industrivärden A": "INDU-A.ST",
+    "Investor": "INVE-B.ST", "Lifco": "LIFCO-B.ST", "NIBE": "NIBE-B.ST",
+    "Nordea": "NDA-SE.ST", "Saab": "SAAB-B.ST", "SAAB B": "SAAB-B.ST",
+    "Sandvik": "SAND.ST", "SEB": "SEB-A.ST", "Skanska": "SKA-B.ST",
+    "SKF": "SKF-B.ST", "SCA": "SCA-B.ST", "Handelsbanken": "SHB-A.ST",
+    "Swedbank": "SWED-A.ST", "Tele2": "TEL2-B.ST", "Telia": "TELIA.ST",
+    "Volvo": "VOLV-B.ST", "Volvo B": "VOLV-B.ST",
+    "Berkshire Hathaway B": "BRK-B", "Latour B": "LATO-B.ST",
+    "Nasdaq": "NDAQ", "Electrolux B": "ELUX-B.ST", "Sirius XM": "SIRI",
+    "Rheinmetall": "RHM.DE", "Rivian Automotive A": "RIVN",
+}
+TICKER_CURRENCY = {
+    "BRK-B": "SEK",  # Berkshire-kursen i exporten anges i SEK enligt användaren.
+    "NDAQ": "USD", "SIRI": "USD", "RIVN": "USD", "RHM.DE": "EUR",
+}
+
+
+def decimal_value(value: str) -> Decimal:
+    return Decimal("".join(value.strip().split()).replace(",", "."))
+
+
+def canonical_decimal(value: str) -> str:
+    return format(decimal_value(value).normalize(), "f")
+
+
+def read_existing() -> list[dict[str, str]]:
+    if not TARGET_FILE.exists() or TARGET_FILE.stat().st_size == 0:
+        return []
+    with TARGET_FILE.open("r", encoding="utf-8-sig", newline="") as file:
+        rows = [row for row in csv.DictReader(file, delimiter=";") if row.get("ticker")]
+    for row in rows:
+        row["transaction_type"] = (row.get("transaction_type") or "KÖP").upper()
+        row["commission"] = row.get("commission") or "0"
+    return rows
+
+
+def signature(row: dict[str, str]) -> tuple[str, ...]:
+    return (
+        row["date"], (row.get("transaction_type") or "KÖP").upper(), row["ticker"],
+        canonical_decimal(row["quantity"]), canonical_decimal(row["price"]),
+        canonical_decimal(row.get("commission") or "0"),
+    )
+
+
+def convert_source() -> tuple[list[dict[str, str]], list[str]]:
+    with SOURCE_FILE.open("r", encoding="utf-16", newline="") as file:
+        reader = csv.reader(file, delimiter="\t")
+        next(reader, None)  # Duplicate Valuta headers are handled by fixed positions.
+        converted, warnings = [], []
+        for row_number, row in enumerate(reader, start=2):
+            if not row or not any(cell.strip() for cell in row):
+                continue
+            if len(row) < 28:
+                warnings.append(f"Rad {row_number}: för få kolumner; hoppas över.")
+                continue
+            security = row[6].strip()
+            ticker = SECURITY_TO_TICKER.get(security)
+            if not ticker:
+                warnings.append(f"Rad {row_number}: okänt värdepapper {security!r}; hoppas över.")
+                continue
+            transaction_type = {"KÖPT": "KÖP", "SÅLT": "SÄLJ"}.get(row[5].strip().upper())
+            if not transaction_type:
+                warnings.append(f"Rad {row_number}: okänd transaktionstyp {row[5]!r}; hoppas över.")
+                continue
+            try:
+                trade_date = row[2].strip() or row[1].strip()  # Affärsdag, fallback Bokföringsdag.
+                quantity = decimal_value(row[8])
+                price = decimal_value(row[9])
+                commission = decimal_value(row[26] or "0")
+                fee_currency = row[27].strip().upper()
+                target_currency = TICKER_CURRENCY.get(ticker, "SEK" if ticker.endswith(".ST") else "")
+                if ticker == "BRK-B":
+                    # Brokerkursen står i utländsk valuta; lagra kostnaden i SEK i appen.
+                    price *= decimal_value(row[21])
+                if fee_currency and target_currency and fee_currency != target_currency:
+                    rate = decimal_value(row[21])  # SEK per unit of trade currency.
+                    if rate <= 0:
+                        raise ValueError("växlingskurs saknas för courtagekonvertering")
+                    commission /= rate
+                commission = commission.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                entry = {
+                    "date": trade_date,
+                    "transaction_type": transaction_type,
+                    "ticker": ticker,
+                    "quantity": format(quantity.normalize(), "f"),
+                    "price": format(price.normalize(), "f"),
+                    "commission": format(commission, ".2f"),
+                }
+                signature(entry)
+                converted.append(entry)
+            except (InvalidOperation, ValueError, IndexError) as error:
+                warnings.append(f"Rad {row_number}: ogiltiga värden ({error}); hoppas över.")
+    return converted, warnings
+
+
+def write_rows(rows: list[dict[str, str]]) -> None:
+    handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", dir=TARGET_FILE.parent, delete=False)
+    temp_path = Path(handle.name)
+    try:
+        with handle:
+            writer = csv.DictWriter(handle, fieldnames=FIELDNAMES, delimiter=";")
+            writer.writeheader()
+            writer.writerows(rows)
+        os.replace(temp_path, TARGET_FILE)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--apply", action="store_true", help="Spara transaktionerna i aktiekop.csv")
+    args = parser.parse_args()
+    source_rows, warnings = convert_source()
+    existing = read_existing()
+    known = {signature(row) for row in existing}
+    new_rows, duplicates = [], 0
+    for row in source_rows:
+        key = signature(row)
+        if key in known:
+            duplicates += 1
+            continue
+        known.add(key)
+        new_rows.append(row)
+    print(f"Källfil: {SOURCE_FILE}")
+    print(f"Konverterbara transaktioner: {len(source_rows)}")
+    print(f"Dubbletter som hoppas över: {duplicates}")
+    print(f"Nya transaktioner: {len(new_rows)}")
+    if warnings:
+        print("Rader att granska:")
+        for warning in warnings:
+            print(f"  {warning}")
+    counts = {}
+    for row in new_rows:
+        key = (row["transaction_type"], row["ticker"])
+        counts[key] = counts.get(key, 0) + 1
+    for (transaction_type, ticker), count in sorted(counts.items()):
+        print(f"  {transaction_type} {ticker}: {count}")
+    if not args.apply:
+        print("Förhandsvisning klar. Kör med --apply för att spara.")
+        return
+    write_rows(existing + new_rows)
+    print(f"Importerade {len(new_rows)} transaktioner till {TARGET_FILE}.")
+
+
+if __name__ == "__main__":
+    main()

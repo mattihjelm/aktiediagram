@@ -1,0 +1,13 @@
+# Lokala köp- och säljtransaktioner innehåller privata ekonomiska uppgifter.
+aktiekop.csv
+
+# Genererade diagram och hämtade kursdata.
+aktier_graf.html
+*_historiska_kurser.csv
+
+# Numbers-dokument, editorbackuper och Python-cache.
+*.numbers
+*~
+__pycache__/
+*.py[cod]
+.DS_Store
