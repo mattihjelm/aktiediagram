@@ -181,7 +181,7 @@ För aktier med registrerade köp SHALL den externa legenden visa uppskattad vin
 
 ### Requirement: Lokal körning
 
-Diagrammet SHALL serveras lokalt via en loopback HTTP-server så transaktionsformuläret kan spara data via `/api/purchases`. Appen SHALL öppna diagrammet i webbläsaren och skapa en HTML-kopia `aktier_graf.html`. På breda fönster SHALL uppdateringsknappen och datumfälten ligga till höger om köpformuläret och linjera med diagramområdets högra kant. Servern SHALL kunna stoppas med Ctrl+C. Layouten SHALL anpassa diagram, legend och transaktionskontroller för smalare fönster.
+Diagrammet SHALL serveras lokalt via en loopback HTTP-server så transaktionsformuläret kan spara data via `/api/purchases`. Appen SHALL öppna diagrammet i webbläsaren och skapa en HTML-kopia `aktier_graf.html`. På breda fönster SHALL uppdateringsknappen och datumfälten ligga till höger om köpformuläret, ungefär centrerade ovanför diagrammet. Servern SHALL kunna stoppas med Ctrl+C. Layouten SHALL anpassa diagram, legend och transaktionskontroller för smalare fönster.
 
 #### Scenario: Starta och stoppa appen
 

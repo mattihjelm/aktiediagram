@@ -137,9 +137,9 @@ def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: 
   body { margin: 0; }
   #stock-chart-layout { display: flex; flex-direction: column; gap: 8px; padding: 0 12px; }
   #stock-chart-title { margin: 12px 0 0; font: 600 24px sans-serif; color: #2a3f5f; }
-  #top-controls-row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; width: calc(100% - 92px); margin-left: 92px; box-sizing: border-box; }
+  #top-controls-row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: flex-start; gap: 12px; width: calc(100% - 92px); margin-left: 92px; box-sizing: border-box; }
   #top-controls-row #purchase-panel { margin-left: 0; max-width: 100%; }
-  #refresh-controls { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 10px; margin-left: auto; max-width: 100%; font: 14px sans-serif; }
+  #refresh-controls { display: flex; flex-wrap: wrap; align-items: end; align-self: center; justify-content: flex-end; gap: 10px; margin-left: clamp(20px, 3vw, 44px); max-width: 100%; font: 14px sans-serif; }
   #refresh-data-button { padding: 7px 11px; cursor: pointer; }
   #visible-date-controls { display: flex; align-items: end; gap: 8px; }
   #visible-date-controls label { display: grid; gap: 3px; }
@@ -182,7 +182,7 @@ def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: 
   #purchase-list th { background: #f3f5f8; }
   #purchase-list td.number { text-align: right; font-variant-numeric: tabular-nums; }
   #purchase-list-content { width: max-content; max-width: 100%; overflow-x: auto; }
-  @media (max-width: 900px) { #stock-chart-viewport { flex-direction: column; } #stock-chart-viewport > .plotly-graph-div { flex: none; width: 100% !important; height: 70vh !important; min-height: 520px; } #stock-custom-legend { flex: 0 1 auto; width: 100%; max-height: 280px; padding: 8px; border: 1px solid #e1e5eb; } #top-controls-row { width: calc(100% - 92px); margin-left: 92px; justify-content: flex-end; } #top-controls-row #purchase-panel { max-width: 100%; margin-right: auto; } #purchase-list { max-width: calc(100% - 92px); } #refresh-controls { margin-left: auto; } #purchase-panel, #purchase-list { margin-left: 92px; } #purchase-form { grid-template-columns: repeat(2, max-content); } #purchase-form button { grid-column: 1 / -1; justify-self: start; } #purchase-total { grid-column: 1 / -1; justify-self: start; margin: 0; } }
+  @media (max-width: 900px) { #stock-chart-viewport { flex-direction: column; } #stock-chart-viewport > .plotly-graph-div { flex: none; width: 100% !important; height: 70vh !important; min-height: 520px; } #stock-custom-legend { flex: 0 1 auto; width: 100%; max-height: 280px; padding: 8px; border: 1px solid #e1e5eb; } #top-controls-row { width: calc(100% - 92px); margin-left: 92px; justify-content: flex-start; } #top-controls-row #purchase-panel { max-width: 100%; margin-right: auto; } #purchase-list { max-width: calc(100% - 92px); } #refresh-controls { margin-left: clamp(12px, 3vw, 24px); } #purchase-panel, #purchase-list { margin-left: 92px; } #purchase-form { grid-template-columns: repeat(2, max-content); } #purchase-form button { grid-column: 1 / -1; justify-self: start; } #purchase-total { grid-column: 1 / -1; justify-self: start; margin: 0; } }
 </style>
 <script>
 const purchaseGraph = document.querySelector('.plotly-graph-div');
