@@ -229,7 +229,8 @@ def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: 
   #purchase-list th, #purchase-list td { padding: 7px 9px; border-bottom: 1px solid #e1e5eb; white-space: nowrap; }
   #purchase-list th { background: #f3f5f8; }
   #purchase-list td.number { text-align: right; font-variant-numeric: tabular-nums; }
-  #purchase-list-content { width: max-content; max-width: 100%; overflow-x: auto; }
+  #purchase-list-content { width: max-content; max-width: 100%; max-height: 320px; overflow: auto; }
+  #purchase-list-content thead th { position: sticky; top: 0; z-index: 1; }
   #transaction-tables { display: flex; align-items: flex-start; gap: 20px; width: calc(100% - 92px); margin: 12px 0 28px 92px; box-sizing: border-box; }
   #transaction-tables > section { flex: 1 1 50%; min-width: 0; max-width: 50%; margin: 0; padding: 0; border: 0; font: 15px sans-serif; }
   #transaction-tables #purchase-list { width: auto; max-width: 50%; margin: 0; }
@@ -553,7 +554,16 @@ window.renderPortfolioSummary = function() {
   });
   table.append(body);
   container.append(table);
+  window.syncTransactionListHeight();
 };
+window.syncTransactionListHeight = function() {
+  const list = document.getElementById('purchase-list-content');
+  const summaryTable = document.querySelector('#portfolio-summary-content table');
+  if (!list) return;
+  const height = summaryTable ? summaryTable.getBoundingClientRect().height : 320;
+  list.style.maxHeight = `${Math.max(120, Math.ceil(height))}px`;
+};
+window.addEventListener('resize', () => requestAnimationFrame(window.syncTransactionListHeight));
 window.renderPurchaseList();
 window.renderPortfolioSummary();
 const importEventsButton = document.getElementById('import-events-button');
