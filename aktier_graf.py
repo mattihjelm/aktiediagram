@@ -567,6 +567,7 @@ window.renderPortfolioSummary = function() {
       date: String(stock.x[latestIndex]).slice(0, 10),
       quantity: amount(held),
       price: latestData[1] || `${money(latestPrice)}${currency ? ` ${currency}` : ''}`,
+      value: `${money(latestPrice * held)}${currency ? ` ${currency}` : ''}`,
       valueSek: validFx ? `${money(latestPrice * currentFx * held)} kr` : '—',
       gav: `${held > 0 ? money(localBasis / held) : '—'}${held > 0 && currency ? ` ${currency}` : ''}`,
       profit: profitSek === null ? '—' : `${profitSek > 0 ? '+' : ''}${money(profitSek)} kr`,
@@ -582,11 +583,11 @@ window.renderPortfolioSummary = function() {
     return;
   }
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Aktie</th><th>Datum</th><th>Antal</th><th>Senaste kurs</th><th>Värde SEK</th><th>GAV (genomsnittligt anskaffningsvärde)</th><th>Resultat (kr)</th><th>Resultat (%)</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Aktie</th><th>Datum</th><th>Antal</th><th>Senaste kurs</th><th>Värde</th><th>Värde SEK</th><th>GAV (genomsnittligt anskaffningsvärde)</th><th>Resultat (kr)</th><th>Resultat (%)</th></tr></thead>';
   const body = document.createElement('tbody');
   rows.forEach(row => {
     const tr = document.createElement('tr');
-    [row.name, row.date, row.quantity, row.price, row.valueSek, row.gav, row.profit, row.percent].forEach((value, index) => {
+    [row.name, row.date, row.quantity, row.price, row.value, row.valueSek, row.gav, row.profit, row.percent].forEach((value, index) => {
       const td = document.createElement('td');
       td.textContent = value;
       if (index > 1) td.className = 'number';
