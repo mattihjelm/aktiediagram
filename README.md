@@ -19,7 +19,7 @@ python3 -m pip install -r requirements.txt
 python3 aktier_graf.py
 ```
 
-Appen läser aktier och initial synlighet från `aktier.csv`, hämtar historik från 2010 och öppnar diagrammet i webbläsaren. Dagskurser används först efter respektive börsstängning och en kort publiceringsmarginal, så ofullständiga kurser under handelsdagen inte används. Knappen **Hämta senaste slutkurser** hämtar senare tillgängliga dagskurser från Yahoo Finance utan att starta om appen och uppdaterar kurvor och resultat. Den lokala servern stoppas med Ctrl+C i terminalen. `aktier_graf.html` skapas som en statisk kopia; formuläret som sparar transaktioner och knappen för datauppdatering använder den lokala servern.
+Appen läser aktier och initial synlighet från `aktier.csv`, hämtar historik från 2010 och öppnar diagrammet i webbläsaren. Dagskurser används först efter respektive börsstängning och en kort publiceringsmarginal. Knappen **Hämta slutkurser** hämtar senare tillgängliga dagskurser från Yahoo Finance. **Hämta aktuell kurs** hämtar senaste tillgängliga intradagskurs och uppdaterar diagrammet, legenden och vinst/förlust-tabellen. Den lokala servern stoppas med Ctrl+C i terminalen. `aktier_graf.html` skapas som en statisk kopia; formuläret och knapparna för datauppdatering använder den lokala servern.
 
 Start- och slutdatum för det synliga diagramintervallet kan anges direkt i ISO-format (`ÅÅÅÅ-MM-DD`) eller ändras med handtagen i diagrammets nedre datumreglage. Fälten och reglaget hålls synkroniserade.
 

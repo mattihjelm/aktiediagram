@@ -63,6 +63,13 @@ Appen SHALL hämta justerade dagskurser från Yahoo Finance med historik från 2
 - **WHEN** ingen senare slutkurs finns
 - **THEN** appen meddelar att ingen ny slutkurs är tillgänglig
 
+#### Scenario: Hämta aktuella intradagskurser
+
+- **WHEN** användaren klickar på `Hämta aktuell kurs`
+- **THEN** appen hämtar senaste tillgängliga intradagskurs från Yahoo Finance för aktierna
+- **AND** diagram, legend och vinst/förlust-tabellen uppdateras med kurserna utan omstart
+- **AND** Berkshire-kursen räknas om till SEK
+
 ### Requirement: Kurvornas synlighet och legend
 
 Diagrammet SHALL visa en extern aktielegend med en solo-checkbox och klickbart aktienamn för varje tillgänglig aktie. Klick på aktienamnet SHALL växla kurvan och dess transaktionsmarkeringar av eller på. Solo SHALL visa endast den valda aktien och dess transaktioner, och avmarkering SHALL återställa synligheten från före sololäget. Kurvnamn vid kurvornas slut SHALL vara förbundna med sina slutpunkter av tunna svarta ledarlinjer och placeras så att etiketterna inte överlappa. Hovring över ett externt aktienamn SHALL tillfälligt öka motsvarande kurvas tjocklek från 2 px till 5 px. Legendens vinst/förlustinformation SHALL följa respektive aktienamn.
@@ -164,7 +171,7 @@ För aktier med registrerade köp SHALL den externa legenden visa uppskattad vin
 
 ### Requirement: Visa aktuell portföljställning bredvid transaktionslistan
 
-Under diagrammet SHALL en sammanställning visas till höger om listan `Transaktioner`, med en rad per aktie som har registrerade transaktioner. Tabellen SHALL visa aktiens namn, datum för senast tillgängliga dags-slutkurs, kvarvarande antal, senaste kurs, GAV (genomsnittligt anskaffningsvärde inklusive courtage), resultat i SEK och resultat i procent. Resultatet SHALL inkludera realiserad vinst/förlust från registrerade försäljningar och orealiserad vinst/förlust från kvarvarande aktier. GAV SHALL räknas med viktat genomsnittligt anskaffningsvärde, inklusive courtage. Utländska köp SHALL räknas om till SEK med valutakurs för transaktionsdagen eller närmast föregående tillgängliga valutadag; marknadsvärdet SHALL räknas om med kurs för senaste tillgängliga stängningsdag eller närmast föregående valutadag. Aktiens senaste dagskurs SHALL vara dagens stängningskurs när den finns tillgänglig, annars senast tillgängliga börsdags stängningskurs. Tabellen SHALL uppdateras efter en ny transaktion och efter uppdatering av marknadsdata.
+Under diagrammet SHALL en sammanställning visas till höger om listan `Transaktioner`, med en rad per aktie som har registrerade transaktioner. Tabellen SHALL visa aktiens namn, datum för senast tillgängliga kurs, kvarvarande antal, senaste kurs, GAV (genomsnittligt anskaffningsvärde inklusive courtage), resultat i SEK och resultat i procent. Resultatet SHALL inkludera realiserad vinst/förlust från registrerade försäljningar och orealiserad vinst/förlust från kvarvarande aktier. GAV SHALL räknas med viktat genomsnittligt anskaffningsvärde, inklusive courtage. Utländska köp SHALL räknas om till SEK med valutakurs för transaktionsdagen eller närmast föregående tillgängliga valutadag; marknadsvärdet SHALL räknas om med senast tillgängliga valutakurs. Tabellen SHALL uppdateras efter en ny transaktion och efter uppdatering av marknadsdata, inklusive aktuella intradagskurser.
 
 Registrerade utdelningar SHALL räknas som kontant avkastning i SEK-resultatet, utan att ändra aktieantal eller GAV. Eventuell källskatt SHALL minska utdelningsresultatet.
 

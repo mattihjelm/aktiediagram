@@ -1,6 +1,7 @@
 """Jämför ABB.ST, BRK-B och SCA-B.ST i ett gemensamt diagram."""
 
 from datetime import date, datetime, time, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -255,7 +256,11 @@ refreshControls.id = 'refresh-controls';
 const refreshButton = document.createElement('button');
 refreshButton.id = 'refresh-data-button';
 refreshButton.type = 'button';
-refreshButton.textContent = 'Hämta aktuell kurs';
+refreshButton.textContent = 'Hämta slutkurser';
+const currentPriceButton = document.createElement('button');
+currentPriceButton.id = 'current-price-button';
+currentPriceButton.type = 'button';
+currentPriceButton.textContent = 'Hämta aktuell kurs';
 const visibleDateControls = document.createElement('div');
 visibleDateControls.id = 'visible-date-controls';
 const visibleStartLabel = document.createElement('label');
@@ -283,7 +288,7 @@ visibleDateStatusElement.setAttribute('role', 'status');
 const refreshStatus = document.createElement('span');
 refreshStatus.id = 'refresh-data-status';
 refreshStatus.setAttribute('role', 'status');
-refreshControls.append(refreshButton, visibleDateControls, visibleDateStatusElement, refreshStatus);
+refreshControls.append(refreshButton, currentPriceButton, visibleDateControls, visibleDateStatusElement, refreshStatus);
 const topControlsRow = document.createElement('div');
 topControlsRow.id = 'top-controls-row';
 topControlsRow.append(purchasePanel, refreshControls);
@@ -331,7 +336,7 @@ function toIsoDate(value) {
 const initialAxisRange = purchaseGraph.layout.xaxis.range;
 const sliderDataRange = purchaseGraph.layout.xaxis.rangeslider.range;
 const allowedStartDate = toIsoDate(sliderDataRange[0]);
-const allowedEndDate = toIsoDate(initialAxisRange[1]);
+let allowedEndDate = toIsoDate(initialAxisRange[1]);
 function isIsoDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -627,6 +632,71 @@ importEventsButton.addEventListener('click', async () => {
     importEventsButton.disabled = false;
   }
 });
+currentPriceButton.addEventListener('click', async () => {
+  currentPriceButton.disabled = true;
+  refreshStatus.textContent = 'Hämtar senaste tillgängliga intradagskurser…';
+  try {
+    const response = await fetch('/api/current-prices', {method: 'POST'});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Aktuella kurser kunde inte hämtas.');
+    const updates = [];
+    let latestDate = '';
+    Object.entries(result.updates || {}).forEach(([ticker, update]) => {
+      const traceIndex = window.stockGraphState.stockTraceByTicker[ticker];
+      if (traceIndex === undefined) return;
+      const trace = purchaseGraph.data[traceIndex];
+      const x = Array.from(trace.x);
+      const y = Array.from(trace.y);
+      const customdata = Array.from(trace.customdata);
+      const date = String(update.date).slice(0, 10);
+      const lastDate = String(x[x.length - 1]).slice(0, 10);
+      if (!date || date < lastDate) return;
+      const base = Number(window.stockGraphState.visibleBases[traceIndex]) || Number(customdata[0][0]);
+      const point = [Number(update.price), update.customdata[1], 1.0, update.customdata[3]];
+      if (date === lastDate) {
+        x[x.length - 1] = date;
+        y[y.length - 1] = Number(update.price) / base * 100;
+        customdata[customdata.length - 1] = point;
+      } else {
+        x.push(date);
+        y.push(Number(update.price) / base * 100);
+        customdata.push(point);
+      }
+      updates.push({ticker, traceIndex, x, y, customdata});
+      if (date > latestDate) latestDate = date;
+    });
+    if (!updates.length) {
+      refreshStatus.textContent = 'Inga aktuella kurser kunde hämtas.';
+    } else {
+      await Promise.all(updates.map(update => Plotly.restyle(purchaseGraph, {
+        x: [update.x], y: [update.y], customdata: [update.customdata],
+      }, [update.traceIndex])));
+      const axisRange = purchaseGraph._fullLayout.xaxis.range.map(toIsoDate);
+      const rangeEnd = latestDate > axisRange[1] ? latestDate : axisRange[1];
+      allowedEndDate = rangeEnd > allowedEndDate ? rangeEnd : allowedEndDate;
+      if (rangeEnd !== axisRange[1]) {
+        const firstDate = purchaseGraph.data
+          .filter(trace => trace.meta && trace.meta.role === 'stock')
+          .reduce((first, trace) => String(trace.x[0]).slice(0, 10) < first ? String(trace.x[0]).slice(0, 10) : first, '9999-12-31');
+        await Plotly.relayout(purchaseGraph, {
+          'xaxis.range': [axisRange[0], rangeEnd],
+          'xaxis.rangeslider.range': [firstDate, rangeEnd],
+        });
+      }
+      updates.forEach(update => window.refreshProfitLabel(update.ticker, false));
+      window.renderCustomLegend();
+      window.renderPortfolioSummary();
+      window.rebaseVisibleStockGraph({});
+      if (window.syncVisibleDateInputs) window.syncVisibleDateInputs();
+      refreshStatus.textContent = `Aktuella kurser uppdaterade för ${updates.length} aktier t.o.m. ${latestDate}.`;
+    }
+    if (result.warnings && result.warnings.length) refreshStatus.textContent += ` ${result.warnings.join(' ')}`;
+  } catch (error) {
+    refreshStatus.textContent = error.message;
+  } finally {
+    currentPriceButton.disabled = false;
+  }
+});
 refreshDataButton.addEventListener('click', async () => {
   refreshDataButton.disabled = true;
   refreshDataStatus.textContent = 'Hämtar slutkurser från Yahoo Finance…';
@@ -795,6 +865,79 @@ def run_local_chart_server(
                     })
                 except Exception as error:
                     self.send_json(500, {"error": f"Kunde inte importera aktiehändelser: {error}"})
+                return
+            if self.path == "/api/current-prices":
+                try:
+                    warnings: list[str] = []
+                    symbols = [stock["ticker"] for stock in stocks]
+                    fx_symbols = {currency: symbol for currency, symbol in FX_TICKERS.items()}
+
+                    def fetch_intraday(symbol: str):
+                        history = yf.Ticker(symbol).history(
+                            period="1d", interval="1m", auto_adjust=True,
+                        )
+                        if history.empty or "Close" not in history:
+                            return symbol, None
+                        close = history["Close"].dropna()
+                        if isinstance(close, pd.DataFrame):
+                            close = close.iloc[:, 0].dropna()
+                        return symbol, close if not close.empty else None
+
+                    intraday: dict[str, pd.Series] = {}
+                    with ThreadPoolExecutor(max_workers=8) as executor:
+                        futures = [executor.submit(fetch_intraday, symbol) for symbol in [*symbols, *fx_symbols.values()]]
+                        for future in as_completed(futures):
+                            try:
+                                symbol, close = future.result()
+                                if close is not None:
+                                    intraday[symbol] = close
+                            except Exception as error:
+                                warnings.append(f"En kurs kunde inte hämtas ({error}).")
+
+                    current_fx: dict[str, float] = {}
+                    for currency, symbol in fx_symbols.items():
+                        close = intraday.get(symbol)
+                        if close is not None and len(close):
+                            current_fx[currency] = float(close.iloc[-1])
+                        else:
+                            previous = fx_rates_by_currency.get(currency)
+                            if previous is not None and not previous.empty:
+                                current_fx[currency] = float(previous.iloc[-1])
+
+                    updates: dict[str, dict[str, object]] = {}
+                    for stock in stocks:
+                        ticker = stock["ticker"]
+                        close = intraday.get(ticker)
+                        if close is None or close.empty:
+                            warnings.append(f"{stock['name']}: ingen aktuell kurs hittades.")
+                            continue
+                        timestamp = pd.Timestamp(close.index[-1])
+                        price = float(close.iloc[-1])
+                        if ticker == "BRK-B":
+                            rate = current_fx.get("USD")
+                            if rate is None:
+                                warnings.append("Berkshire kunde inte räknas om till SEK; USD/SEK saknas.")
+                                continue
+                            price *= rate
+                        currency = currency_for_ticker(ticker)
+                        fx_rate = fx_rate_for_currency(fx_currency_for_ticker(ticker), timestamp, fx_rates_by_currency)
+                        if ticker in US_MARKET_TICKERS - {"BRK-B"}:
+                            fx_rate = current_fx.get("USD", fx_rate)
+                        elif ticker == "RHM.DE":
+                            fx_rate = current_fx.get("EUR", fx_rate)
+                        if fx_rate is None:
+                            fx_rate = 1.0 if fx_currency_for_ticker(ticker) == "SEK" else None
+                        display = f"{price:,.2f}".replace(",", " ").replace(".", ",") + (f" {currency}" if currency else "")
+                        updates[ticker] = {
+                            "date": timestamp.strftime("%Y-%m-%d"),
+                            "price": price,
+                            "customdata": [price, display, 1.0, fx_rate],
+                        }
+                    if not updates and not warnings:
+                        raise RuntimeError("Yahoo Finance returnerade inga aktuella kurser.")
+                    self.send_json(200, {"updates": updates, "warnings": warnings})
+                except Exception as error:
+                    self.send_json(500, {"error": f"Kunde inte hämta aktuella kurser: {error}"})
                 return
             if self.path == "/api/refresh":
                 try:
