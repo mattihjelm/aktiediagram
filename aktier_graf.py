@@ -186,9 +186,14 @@ def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: 
   #top-controls-row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: flex-start; gap: 12px; width: calc(100% - 92px); margin-left: 92px; box-sizing: border-box; }
   #top-controls-row #purchase-panel { margin-left: 0; max-width: 100%; }
   #refresh-controls { display: flex; flex-wrap: wrap; align-items: end; align-self: center; justify-content: flex-end; gap: 10px; margin-left: clamp(20px, 3vw, 44px); max-width: 100%; font: 14px sans-serif; }
-  #refresh-data-button { padding: 7px 11px; cursor: pointer; }
-  #visible-date-controls { display: flex; align-items: end; gap: 8px; }
+  #refresh-controls h2 { margin: 0 0 12px; font-size: 19px; }
+  #quote-controls { display: flex; flex-direction: column; gap: 0; }
+  #quote-buttons { display: flex; align-items: end; gap: 8px; }
+  #refresh-data-button, #current-price-button { box-sizing: border-box; min-height: 42px; padding: 7px 11px; font-size: 16px; cursor: pointer; }
+  #visible-date-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 0; }
+  #visible-date-fields { display: flex; align-items: end; gap: 8px; }
   #visible-date-controls label { display: grid; gap: 3px; }
+  #visible-date-controls label span { font-size: 13px; }
   #visible-date-controls input { box-sizing: border-box; width: 12ch; padding: 6px; font: inherit; }
   #visible-date-status { color: #a33; }
   #refresh-data-status { color: #435064; }
@@ -218,7 +223,7 @@ def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: 
   #purchase-price-label { width: max-content; }
   #purchase-price { width: 100% !important; min-width: 0; }
   #purchase-commission { width: 8ch !important; min-width: 8ch; }
-  #purchase-form button { width: auto; white-space: nowrap; }
+  #purchase-form button { box-sizing: border-box; width: auto; min-height: 42px; padding: 7px 11px; font-size: 16px; white-space: nowrap; }
   #purchase-status { max-width: 60ch; margin: 12px 0 0; color: #435064; }
   #purchase-total { align-self: end; white-space: nowrap; margin: 0 0 8px; font-weight: 600; color: #263448; }
   #purchase-list { width: fit-content; max-width: calc(100% - 92px); box-sizing: border-box; margin-top: 12px; margin-right: 0; margin-bottom: 28px; padding: 0; border: 0; font: 15px sans-serif; }
@@ -261,34 +266,45 @@ const currentPriceButton = document.createElement('button');
 currentPriceButton.id = 'current-price-button';
 currentPriceButton.type = 'button';
 currentPriceButton.textContent = 'Hämta aktuell kurs';
+const quoteControls = document.createElement('div');
+quoteControls.id = 'quote-controls';
+const quoteHeading = document.createElement('h2');
+quoteHeading.textContent = 'Kurser';
+const quoteButtons = document.createElement('div');
+quoteButtons.id = 'quote-buttons';
+quoteButtons.append(refreshButton, currentPriceButton);
+quoteControls.append(quoteHeading, quoteButtons);
 const visibleDateControls = document.createElement('div');
 visibleDateControls.id = 'visible-date-controls';
+const visibleDateHeading = document.createElement('h2');
+visibleDateHeading.textContent = 'Datumintervall';
+const visibleDateFields = document.createElement('div');
+visibleDateFields.id = 'visible-date-fields';
 const visibleStartLabel = document.createElement('label');
-visibleStartLabel.textContent = 'Startdatum (ÅÅÅÅ-MM-DD)';
+visibleStartLabel.innerHTML = '<span>Start</span>';
 const visibleStartInput = document.createElement('input');
 visibleStartInput.id = 'visible-start-date';
 visibleStartInput.type = 'text';
 visibleStartInput.inputMode = 'numeric';
 visibleStartInput.maxLength = 10;
-visibleStartInput.placeholder = '2020-01-01';
 visibleStartLabel.append(visibleStartInput);
 const visibleEndLabel = document.createElement('label');
-visibleEndLabel.textContent = 'Slutdatum (ÅÅÅÅ-MM-DD)';
+visibleEndLabel.innerHTML = '<span>Slut</span>';
 const visibleEndInput = document.createElement('input');
 visibleEndInput.id = 'visible-end-date';
 visibleEndInput.type = 'text';
 visibleEndInput.inputMode = 'numeric';
 visibleEndInput.maxLength = 10;
-visibleEndInput.placeholder = '2026-10-31';
 visibleEndLabel.append(visibleEndInput);
-visibleDateControls.append(visibleStartLabel, visibleEndLabel);
+visibleDateFields.append(visibleStartLabel, visibleEndLabel);
+visibleDateControls.append(visibleDateHeading, visibleDateFields);
 const visibleDateStatusElement = document.createElement('span');
 visibleDateStatusElement.id = 'visible-date-status';
 visibleDateStatusElement.setAttribute('role', 'status');
 const refreshStatus = document.createElement('span');
 refreshStatus.id = 'refresh-data-status';
 refreshStatus.setAttribute('role', 'status');
-refreshControls.append(refreshButton, currentPriceButton, visibleDateControls, visibleDateStatusElement, refreshStatus);
+refreshControls.append(quoteControls, visibleDateControls, visibleDateStatusElement, refreshStatus);
 const topControlsRow = document.createElement('div');
 topControlsRow.id = 'top-controls-row';
 topControlsRow.append(purchasePanel, refreshControls);
@@ -297,7 +313,7 @@ purchaseList.id = 'purchase-list';
 purchaseList.innerHTML = '<div class="transaction-list-heading"><h2>Transaktioner</h2><button id="import-events-button" type="button">Importera aktiehändelser</button></div><p id="import-events-status" role="status"></p><div id="purchase-list-content"></div>';
 const portfolioSummary = document.createElement('section');
 portfolioSummary.id = 'portfolio-summary';
-portfolioSummary.innerHTML = '<h2>Vinst/förlust per aktie</h2><div id="portfolio-summary-content" class="transaction-table-content"></div>';
+portfolioSummary.innerHTML = '<h2>Resultat</h2><div id="portfolio-summary-content" class="transaction-table-content"></div>';
 const transactionTables = document.createElement('div');
 transactionTables.id = 'transaction-tables';
 transactionTables.append(purchaseList, portfolioSummary);
@@ -446,14 +462,18 @@ window.renderPurchaseList = function() {
       const price = Number(String(details[1]).replace(/\s/g, '').replace(',', '.'));
       const commission = Number(String(details[5] || '0').replace(/\s/g, '').replace(',', '.')) || 0;
       const total = type === 'SÄLJ' ? quantity * price - commission : quantity * price + commission;
-      const currency = details[4] || '';
+      const rawCurrency = details[4] || '';
+      const currency = rawCurrency === 'SEK' ? 'kr' : rawCurrency;
+      const formatted = value => Number.isFinite(value)
+        ? value.toLocaleString('sv-SE', {minimumFractionDigits: 2, maximumFractionDigits: 2})
+        : String(value ?? '');
       rows.push({
         date: String(date).slice(0, 10),
         type,
         name: stocksByTicker[trace.meta.ticker] || trace.meta.ticker,
         quantity: type === 'UTDELNING' ? '—' : String(details[2]),
-        price: `${details[1]}${currency ? ` ${currency}` : ''}`,
-        commission: `${details[5] || '0'}${currency ? ` ${currency}` : ''}`,
+        price: `${formatted(price)}${currency ? ` ${currency}` : ''}`,
+        commission: `${formatted(commission)}${currency ? ` ${currency}` : ''}`,
         total: `${total.toLocaleString('sv-SE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}${currency ? ` ${currency}` : ''}`,
       });
     });
@@ -547,6 +567,7 @@ window.renderPortfolioSummary = function() {
       date: String(stock.x[latestIndex]).slice(0, 10),
       quantity: amount(held),
       price: latestData[1] || `${money(latestPrice)}${currency ? ` ${currency}` : ''}`,
+      valueSek: validFx ? `${money(latestPrice * currentFx * held)} kr` : '—',
       gav: `${held > 0 ? money(localBasis / held) : '—'}${held > 0 && currency ? ` ${currency}` : ''}`,
       profit: profitSek === null ? '—' : `${profitSek > 0 ? '+' : ''}${money(profitSek)} kr`,
       percent: profitPercent === null ? '—' : `${profitPercent > 0 ? '+' : ''}${money(profitPercent)}%`,
@@ -561,11 +582,11 @@ window.renderPortfolioSummary = function() {
     return;
   }
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Aktie</th><th>Datum</th><th>Antal</th><th>Senaste kurs</th><th>GAV (genomsnittligt anskaffningsvärde)</th><th>Resultat (kr)</th><th>Resultat (%)</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Aktie</th><th>Datum</th><th>Antal</th><th>Senaste kurs</th><th>Värde SEK</th><th>GAV (genomsnittligt anskaffningsvärde)</th><th>Resultat (kr)</th><th>Resultat (%)</th></tr></thead>';
   const body = document.createElement('tbody');
   rows.forEach(row => {
     const tr = document.createElement('tr');
-    [row.name, row.date, row.quantity, row.price, row.gav, row.profit, row.percent].forEach((value, index) => {
+    [row.name, row.date, row.quantity, row.price, row.valueSek, row.gav, row.profit, row.percent].forEach((value, index) => {
       const td = document.createElement('td');
       td.textContent = value;
       if (index > 1) td.className = 'number';
