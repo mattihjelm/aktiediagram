@@ -12,6 +12,7 @@ import webbrowser
 import pandas as pd
 import plotly.graph_objects as go
 import yfinance as yf
+from konvertera_aktiekop import prepare_import, write_rows
 
 
 STOCK_LIST_FILE = Path(__file__).with_name("aktier.csv")
@@ -76,6 +77,8 @@ def load_purchases() -> list[dict[str, str]]:
     for row in rows:
         row.setdefault("transaction_type", "KÖP")
         row.setdefault("commission", "0")
+        row.setdefault("source_id", "")
+        row.setdefault("amount_currency", "")
     return rows
 
 
@@ -104,7 +107,15 @@ def fx_rate_to_sek(
     on_date: str | date | pd.Timestamp,
     rates_by_currency: dict[str, pd.Series],
 ) -> float | None:
-    currency = fx_currency_for_ticker(ticker)
+    return fx_rate_for_currency(fx_currency_for_ticker(ticker), on_date, rates_by_currency)
+
+
+def fx_rate_for_currency(
+    currency: str,
+    on_date: str | date | pd.Timestamp,
+    rates_by_currency: dict[str, pd.Series],
+) -> float | None:
+    currency = currency.upper()
     if currency == "SEK":
         return 1.0
     rates = rates_by_currency.get(currency)
@@ -210,7 +221,10 @@ def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: 
   #purchase-status { max-width: 60ch; margin: 12px 0 0; color: #435064; }
   #purchase-total { align-self: end; white-space: nowrap; margin: 0 0 8px; font-weight: 600; color: #263448; }
   #purchase-list { width: fit-content; max-width: calc(100% - 92px); box-sizing: border-box; margin-top: 12px; margin-right: 0; margin-bottom: 28px; padding: 0; border: 0; font: 15px sans-serif; }
-  #purchase-list h2 { margin: 0 0 12px; font-size: 19px; }
+  #purchase-list h2 { margin: 0; font-size: 19px; }
+  .transaction-list-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  #import-events-button { padding: 7px 11px; cursor: pointer; white-space: nowrap; }
+  #import-events-status { min-height: 1.2em; margin: 0 0 8px; color: #435064; }
   #purchase-list table { width: max-content; max-width: 100%; border-collapse: collapse; text-align: left; }
   #purchase-list th, #purchase-list td { padding: 7px 9px; border-bottom: 1px solid #e1e5eb; white-space: nowrap; }
   #purchase-list th { background: #f3f5f8; }
@@ -274,7 +288,7 @@ topControlsRow.id = 'top-controls-row';
 topControlsRow.append(purchasePanel, refreshControls);
 const purchaseList = document.createElement('section');
 purchaseList.id = 'purchase-list';
-purchaseList.innerHTML = '<h2>Registrerade aktieköp</h2><div id="purchase-list-content"></div>';
+purchaseList.innerHTML = '<div class="transaction-list-heading"><h2>Transaktioner</h2><button id="import-events-button" type="button">Importera aktiehändelser</button></div><p id="import-events-status" role="status"></p><div id="purchase-list-content"></div>';
 const portfolioSummary = document.createElement('section');
 portfolioSummary.id = 'portfolio-summary';
 portfolioSummary.innerHTML = '<h2>Vinst/förlust per aktie</h2><div id="portfolio-summary-content" class="transaction-table-content"></div>';
@@ -415,7 +429,7 @@ window.renderPurchaseList = function() {
         date: String(date).slice(0, 10),
         type,
         name: stocksByTicker[trace.meta.ticker] || trace.meta.ticker,
-        quantity: String(details[2]),
+        quantity: type === 'UTDELNING' ? '—' : String(details[2]),
         price: `${details[1]}${currency ? ` ${currency}` : ''}`,
         commission: `${details[5] || '0'}${currency ? ` ${currency}` : ''}`,
         total: `${total.toLocaleString('sv-SE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}${currency ? ` ${currency}` : ''}`,
@@ -431,7 +445,7 @@ window.renderPurchaseList = function() {
     return;
   }
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Datum</th><th>Typ</th><th>Aktie</th><th>Antal</th><th>Kurs</th><th>Courtage</th><th>Totalbelopp</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Datum</th><th>Typ</th><th>Aktie</th><th>Antal</th><th>Kurs/belopp</th><th>Courtage</th><th>Totalbelopp</th></tr></thead>';
   const body = document.createElement('tbody');
   rows.forEach(row => {
     const tr = document.createElement('tr');
@@ -475,10 +489,13 @@ window.renderPortfolioSummary = function() {
       const quantity = ticker === 'SIRI' && date < '2024-09-10' ? enteredQuantity / 10 : enteredQuantity;
       const commission = number(details[5] || 0) || 0;
       const fx = Number(details[7]);
-      if (!(price > 0 && enteredQuantity > 0)) return;
+      const transactionType = details[6] || 'KÖP';
+      if (!(enteredQuantity > 0) || (transactionType === 'UTDELNING' ? price === 0 : price <= 0)) return;
       if (!Number.isFinite(fx) || fx <= 0) fxMissing = true;
       const rate = Number.isFinite(fx) && fx > 0 ? fx : (currency === 'kr' ? 1 : null);
-      if ((details[6] || 'KÖP') === 'SÄLJ') {
+      if (transactionType === 'UTDELNING') {
+        if (rate !== null) realizedSek += (price * enteredQuantity - commission) * rate;
+      } else if ((details[6] || 'KÖP') === 'SÄLJ') {
         if (rate !== null) realizedSek += (price * enteredQuantity - commission) * rate;
         const removed = Math.min(quantity, held);
         if (held > 0 && removed > 0) {
@@ -539,6 +556,51 @@ window.renderPortfolioSummary = function() {
 };
 window.renderPurchaseList();
 window.renderPortfolioSummary();
+const importEventsButton = document.getElementById('import-events-button');
+const importEventsStatus = document.getElementById('import-events-status');
+importEventsButton.addEventListener('click', async () => {
+  importEventsButton.disabled = true;
+  importEventsStatus.textContent = 'Importerar aktiehändelser…';
+  try {
+    const response = await fetch('/api/import-events', {method: 'POST'});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Importen misslyckades.');
+    const grouped = new Map();
+    (result.markers || []).forEach(marker => {
+      const stockIndex = window.stockGraphState.stockTraceByTicker[marker.ticker];
+      if (stockIndex === undefined) return;
+      const purchaseIndex = purchaseGraph.data.findIndex(trace =>
+        trace.meta && trace.meta.role === 'purchase' && trace.meta.ticker === marker.ticker
+      );
+      if (purchaseIndex < 0) return;
+      const base = Number(window.stockGraphState.visibleBases[stockIndex]) || Number(purchaseGraph.data[stockIndex].customdata[0][0]);
+      if (!grouped.has(purchaseIndex)) grouped.set(purchaseIndex, {x: [], y: [], customdata: [], symbols: []});
+      const points = grouped.get(purchaseIndex);
+      points.x.push(marker.date);
+      points.y.push(marker.chart_price / base * 100);
+      points.customdata.push([marker.chart_price, marker.price, marker.quantity, marker.ticker, marker.currency, marker.commission, marker.transaction_type, marker.sek_fx_rate, marker.ticker_fx_rate, marker.amount_currency]);
+      points.symbols.push(marker.transaction_type === 'UTDELNING' ? 'diamond' : (marker.transaction_type === 'KÖP' ? 'circle' : 'triangle-down'));
+    });
+    for (const [traceIndex, points] of grouped) {
+      await Plotly.extendTraces(purchaseGraph, {
+        x: [points.x], y: [points.y], customdata: [points.customdata], 'marker.symbol': [points.symbols],
+      }, [traceIndex]);
+    }
+    const tickers = new Set((result.markers || []).map(marker => marker.ticker));
+    tickers.forEach(ticker => window.refreshProfitLabel(ticker, false));
+    window.renderCustomLegend();
+    window.renderPurchaseList();
+    window.renderPortfolioSummary();
+    window.rebaseVisibleStockGraph({});
+    const notShown = Number(result.added || 0) - (result.markers || []).length;
+    importEventsStatus.textContent = `${result.added} nya händelser importerade; ${result.duplicates} dubbletter hoppades över.${notShown > 0 ? ` ${notShown} händelser kunde inte visas i diagrammet.` : ''}`;
+    if (result.warning_count) importEventsStatus.textContent += ` ${result.warning_count} källrader kunde inte mappas.`;
+  } catch (error) {
+    importEventsStatus.textContent = error.message;
+  } finally {
+    importEventsButton.disabled = false;
+  }
+});
 refreshDataButton.addEventListener('click', async () => {
   refreshDataButton.disabled = true;
   refreshDataStatus.textContent = 'Hämtar slutkurser från Yahoo Finance…';
@@ -664,6 +726,50 @@ def run_local_chart_server(
             self.wfile.write(body)
 
         def do_POST(self) -> None:
+            if self.path == "/api/import-events":
+                try:
+                    prepared = prepare_import()
+                    existing = prepared["existing"]
+                    new_rows = prepared["new_rows"]
+                    if new_rows:
+                        write_rows(existing + new_rows)
+                    markers = []
+                    for row in new_rows:
+                        ticker = row["ticker"]
+                        series = price_series_by_ticker.get(ticker)
+                        if series is None:
+                            continue
+                        event_date = pd.Timestamp(row["date"])
+                        earlier_prices = series.loc[series.index <= event_date]
+                        if earlier_prices.empty:
+                            continue
+                        amount_currency = row.get("amount_currency") or ""
+                        markers.append({
+                            "ticker": ticker,
+                            "date": event_date.strftime("%Y-%m-%d"),
+                            "chart_price": float(earlier_prices.iloc[-1]),
+                            "price": row["price"],
+                            "quantity": row["quantity"],
+                            "currency": amount_currency or currency_for_ticker(ticker),
+                            "commission": row["commission"],
+                            "transaction_type": row["transaction_type"],
+                            "amount_currency": amount_currency,
+                            "sek_fx_rate": fx_rate_for_currency(
+                                amount_currency or fx_currency_for_ticker(ticker),
+                                event_date,
+                                fx_rates_by_currency,
+                            ),
+                            "ticker_fx_rate": fx_rate_to_sek(ticker, event_date, fx_rates_by_currency),
+                        })
+                    self.send_json(200, {
+                        "added": len(new_rows),
+                        "duplicates": prepared["duplicates"],
+                        "warning_count": len(prepared["warnings"]),
+                        "markers": markers,
+                    })
+                except Exception as error:
+                    self.send_json(500, {"error": f"Kunde inte importera aktiehändelser: {error}"})
+                return
             if self.path == "/api/refresh":
                 try:
                     updates: dict[str, dict[str, list]] = {}
@@ -794,18 +900,18 @@ def run_local_chart_server(
                 if PURCHASES_FILE.exists() and PURCHASES_FILE.stat().st_size:
                     with PURCHASES_FILE.open("r", encoding="utf-8-sig", newline="") as file:
                         existing_header = next(csv.reader(file, delimiter=";"), [])
-                    if "commission" not in existing_header or "transaction_type" not in existing_header:
+                    if "commission" not in existing_header or "transaction_type" not in existing_header or "source_id" not in existing_header or "amount_currency" not in existing_header:
                         previous_purchases = load_purchases()
                         with PURCHASES_FILE.open("w", encoding="utf-8", newline="") as file:
-                            writer = csv.DictWriter(file, fieldnames=["date", "transaction_type", "ticker", "quantity", "price", "commission"], delimiter=";")
+                            writer = csv.DictWriter(file, fieldnames=["date", "transaction_type", "ticker", "quantity", "price", "commission", "source_id", "amount_currency"], delimiter=";")
                             writer.writeheader()
                             for previous in previous_purchases:
-                                writer.writerow({**previous, "transaction_type": previous.get("transaction_type") or "KÖP", "commission": previous.get("commission") or "0"})
+                                writer.writerow({**previous, "transaction_type": previous.get("transaction_type") or "KÖP", "commission": previous.get("commission") or "0", "source_id": previous.get("source_id") or "", "amount_currency": previous.get("amount_currency") or ""})
                 needs_header = not PURCHASES_FILE.exists() or PURCHASES_FILE.stat().st_size == 0
                 with PURCHASES_FILE.open("a", encoding="utf-8", newline="") as file:
                     writer = csv.DictWriter(
                         file,
-                        fieldnames=["date", "transaction_type", "ticker", "quantity", "price", "commission"],
+                        fieldnames=["date", "transaction_type", "ticker", "quantity", "price", "commission", "source_id", "amount_currency"],
                         delimiter=";",
                     )
                     if needs_header:
@@ -820,6 +926,8 @@ def run_local_chart_server(
                     "chart_price": float(earlier_prices.iloc[-1]),
                     "commission": commission_text,
                     "sek_fx_rate": fx_rate_to_sek(ticker, purchase_date, fx_rates_by_currency),
+                    "ticker_fx_rate": fx_rate_to_sek(ticker, purchase_date, fx_rates_by_currency),
+                    "amount_currency": "",
                 }
                 self.send_json(200, result)
             except (ValueError, InvalidOperation, json.JSONDecodeError) as error:
@@ -970,7 +1078,8 @@ def main() -> None:
         except (KeyError, InvalidOperation, ValueError):
             continue
         earlier_prices = series.loc[series.index <= purchase_date]
-        if not earlier_prices.empty and purchase_price > 0 and quantity > 0:
+        is_dividend = (purchase.get("transaction_type") or "KÖP").upper() == "UTDELNING"
+        if not earlier_prices.empty and (purchase_price != 0 if is_dividend else purchase_price > 0) and quantity > 0:
             purchases_by_ticker[ticker].append({
                 "date": purchase_date.strftime("%Y-%m-%d"),
                 "chart_price": float(earlier_prices.iloc[-1]),
@@ -978,8 +1087,14 @@ def main() -> None:
                 "quantity": str(purchase["quantity"]),
                 "commission": str(commission),
                 "transaction_type": (purchase.get("transaction_type") or "KÖP").upper(),
-                "currency": currency_for_ticker(ticker),
-                "sek_fx_rate": fx_rate_to_sek(ticker, purchase_date, fx_rates_by_currency),
+                "currency": purchase.get("amount_currency") or currency_for_ticker(ticker),
+                "amount_currency": purchase.get("amount_currency") or "",
+                "sek_fx_rate": fx_rate_for_currency(
+                    purchase.get("amount_currency") or fx_currency_for_ticker(ticker),
+                    purchase_date,
+                    fx_rates_by_currency,
+                ),
+                "ticker_fx_rate": fx_rate_to_sek(ticker, purchase_date, fx_rates_by_currency),
             })
 
     for stock in stocks:
@@ -996,7 +1111,7 @@ def main() -> None:
                 customdata=[
                     [
                         purchase["chart_price"], purchase["price"],
-                        purchase["quantity"], ticker, purchase["currency"], purchase["commission"], purchase.get("transaction_type", "KÖP"), purchase.get("sek_fx_rate"),
+                        purchase["quantity"], ticker, purchase["currency"], purchase["commission"], purchase.get("transaction_type", "KÖP"), purchase.get("sek_fx_rate"), purchase.get("ticker_fx_rate"), purchase.get("amount_currency"),
                     ]
                     for purchase in markers
                 ],
@@ -1007,13 +1122,13 @@ def main() -> None:
                 showlegend=False,
                 visible=True if stock["show_initially"] else "legendonly",
                 marker={
-                    "symbol": ["circle" if purchase.get("transaction_type", "KÖP") == "KÖP" else "triangle-down" for purchase in markers],
+                    "symbol": ["diamond" if purchase.get("transaction_type") == "UTDELNING" else ("circle" if purchase.get("transaction_type", "KÖP") == "KÖP" else "triangle-down") for purchase in markers],
                     "size": 10,
                     "color": stock_colors[ticker],
                     "line": {"color": "#333333", "width": 1.5},
                 },
                 hovertemplate=(
-                    f"{stock['name']} %{{customdata[6]}}<br>%{{customdata[2]}} st · "
+                    f"{stock['name']} %{{customdata[6]}} · "
                     "%{customdata[1]} %{customdata[4]}<extra></extra>"
                 ),
             )
@@ -1045,6 +1160,12 @@ def main() -> None:
             if transaction["transaction_type"] == "SÄLJ":
                 held_quantity -= quantity
                 profit += price * transaction_quantity - commission
+            elif transaction["transaction_type"] == "UTDELNING":
+                amount_currency = transaction.get("amount_currency") or fx_currency_for_ticker(ticker)
+                amount_fx = fx_rate_for_currency(amount_currency, transaction["date"], fx_rates_by_currency)
+                ticker_fx = fx_rate_to_sek(ticker, transaction["date"], fx_rates_by_currency)
+                if amount_fx is not None and ticker_fx:
+                    profit += price * transaction_quantity * amount_fx / ticker_fx
             else:
                 cost = price * transaction_quantity + commission
                 invested += cost
@@ -1313,9 +1434,16 @@ function refreshProfitLabel(ticker, render = true) {
         ? enteredQuantity / 10
         : enteredQuantity;
       const commission = Number(String(details[5] || '0').replace(/\s/g, '').replace(',', '.'));
-      if (!(purchasePrice > 0 && enteredQuantity > 0)) return;
+      const transactionType = details[6] || 'KÖP';
+      if (!(enteredQuantity > 0) || (transactionType === 'UTDELNING' ? purchasePrice === 0 : purchasePrice <= 0)) return;
       const fee = Number.isFinite(commission) ? commission : 0;
-      if ((details[6] || 'KÖP') === 'SÄLJ') {
+      if (transactionType === 'UTDELNING') {
+        const amountFx = Number(details[7]);
+        const tickerFx = Number(details[8]);
+        if (Number.isFinite(amountFx) && amountFx > 0 && Number.isFinite(tickerFx) && tickerFx > 0) {
+          profit += purchasePrice * enteredQuantity * amountFx / tickerFx;
+        }
+      } else if (transactionType === 'SÄLJ') {
         heldQuantity -= quantity;
         profit += purchasePrice * enteredQuantity - fee;
       } else {

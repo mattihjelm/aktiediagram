@@ -111,7 +111,7 @@ Hovring över diagrammet SHALL visa datum samt både aktiens kurs och dess index
 
 ### Requirement: Registrera och spara köp och sälj
 
-Appen SHALL erbjuda ett formulär för transaktionstyp (Köp/Sälj), aktie, datum, antal, kurs och courtage. Aktie och datum SHALL föreslå senast tillgänglig kurs på eller före valt datum; priset SHALL kunna redigeras och visas med två decimaler. Om användaren klickar på en kurva SHALL formuläret förifyllas med vald aktie, datum och kurs. Formuläret SHALL visa beräknat totalbelopp inklusive courtage för köp, respektive nettobelopp efter courtage för sälj. Giltiga transaktioner SHALL sparas i `aktiekop.csv` med semikolonseparerade kolumner `date`, `transaction_type`, `ticker`, `quantity`, `price`, `commission`. Kurs och courtage SHALL sparas till två decimaler. Ogiltiga värden eller okända aktier SHALL avvisas med ett begripligt fel.
+Appen SHALL erbjuda ett formulär för transaktionstyp (Köp/Sälj), aktie, datum, antal, kurs och courtage. Aktie och datum SHALL föreslå senast tillgänglig kurs på eller före valt datum; priset SHALL kunna redigeras och visas med två decimaler. Om användaren klickar på en kurva SHALL formuläret förifyllas med vald aktie, datum och kurs. Formuläret SHALL visa beräknat totalbelopp inklusive courtage för köp, respektive nettobelopp efter courtage för sälj. Giltiga transaktioner SHALL sparas i `aktiekop.csv` med semikolonseparerade kolumner `date`, `transaction_type`, `ticker`, `quantity`, `price`, `commission`; importerade transaktioner får även ha `source_id` och `amount_currency`. Kurs och courtage SHALL sparas till två decimaler. Ogiltiga värden eller okända aktier SHALL avvisas med ett begripligt fel.
 
 #### Scenario: Föreslå kurs
 
@@ -164,7 +164,9 @@ För aktier med registrerade köp SHALL den externa legenden visa uppskattad vin
 
 ### Requirement: Visa aktuell portföljställning bredvid transaktionslistan
 
-Under diagrammet SHALL en sammanställning visas till höger om listan `Registrerade aktieköp`, med en rad per aktie som har registrerade transaktioner. Tabellen SHALL visa aktiens namn, datum för senast tillgängliga dags-slutkurs, kvarvarande antal, senaste kurs, GAV (genomsnittligt anskaffningsvärde inklusive courtage), resultat i SEK och resultat i procent. Resultatet SHALL inkludera realiserad vinst/förlust från registrerade försäljningar och orealiserad vinst/förlust från kvarvarande aktier. GAV SHALL räknas med viktat genomsnittligt anskaffningsvärde, inklusive courtage. Utländska köp SHALL räknas om till SEK med valutakurs för transaktionsdagen eller närmast föregående tillgängliga valutadag; marknadsvärdet SHALL räknas om med kurs för senaste tillgängliga stängningsdag eller närmast föregående valutadag. Aktiens senaste dagskurs SHALL vara dagens stängningskurs när den finns tillgänglig, annars senast tillgängliga börsdags stängningskurs. Tabellen SHALL uppdateras efter en ny transaktion och efter uppdatering av marknadsdata.
+Under diagrammet SHALL en sammanställning visas till höger om listan `Transaktioner`, med en rad per aktie som har registrerade transaktioner. Tabellen SHALL visa aktiens namn, datum för senast tillgängliga dags-slutkurs, kvarvarande antal, senaste kurs, GAV (genomsnittligt anskaffningsvärde inklusive courtage), resultat i SEK och resultat i procent. Resultatet SHALL inkludera realiserad vinst/förlust från registrerade försäljningar och orealiserad vinst/förlust från kvarvarande aktier. GAV SHALL räknas med viktat genomsnittligt anskaffningsvärde, inklusive courtage. Utländska köp SHALL räknas om till SEK med valutakurs för transaktionsdagen eller närmast föregående tillgängliga valutadag; marknadsvärdet SHALL räknas om med kurs för senaste tillgängliga stängningsdag eller närmast föregående valutadag. Aktiens senaste dagskurs SHALL vara dagens stängningskurs när den finns tillgänglig, annars senast tillgängliga börsdags stängningskurs. Tabellen SHALL uppdateras efter en ny transaktion och efter uppdatering av marknadsdata.
+
+Registrerade utdelningar SHALL räknas som kontant avkastning i SEK-resultatet, utan att ändra aktieantal eller GAV. Eventuell källskatt SHALL minska utdelningsresultatet.
 
 #### Scenario: Visa aktuell ställning från flera köp
 
@@ -181,7 +183,9 @@ Under diagrammet SHALL en sammanställning visas till höger om listan `Registre
 
 ### Requirement: Konvertera mäklarens transaktionsexport
 
-`konvertera_aktiekop.py` SHALL läsa den förväntade UTF-16-kodade tabbseparerade transaktionsexporten från Downloads, mappa kolumnen `Värdepapper` till appens ticker och omvandla köpta/sålda transaktioner till appens CSV-format. ISIN SHALL inte användas som ticker. Berkshire-kursen i källan SHALL omvandlas till SEK med exportens växlingskurs. Dubbletter SHALL hoppas över baserat på datum, typ, ticker, antal, kurs och courtage. Programmet SHALL som standard endast visa en förhandsgranskning och SHALL bara skriva till `aktiekop.csv` med explicit `--apply`.
+`konvertera_aktiekop.py` SHALL läsa den förväntade UTF-16-kodade tabbseparerade transaktionsexporten från Downloads, mappa kolumnen `Värdepapper` till appens ticker och omvandla köp, försäljningar och utdelningar till appens CSV-format. ISIN SHALL inte användas som ticker. Berkshire-kursen i källan SHALL omvandlas till SEK med exportens växlingskurs. Utdelningens kontantbelopp SHALL importeras som utdelning utan att påverka antal eller anskaffningsvärde; källskatt SHALL registreras som negativ utdelning. Exportens transaktions-ID SHALL sparas för idempotent återimport. Äldre importer utan transaktions-ID SHALL dedupliceras med datum, typ, ticker, antal, kurs och courtage. Programmet SHALL som standard endast visa en förhandsgranskning och SHALL bara skriva till `aktiekop.csv` med explicit `--apply`.
+
+Diagrammets transaktionslista SHALL ha knappen `Importera aktiehändelser`. Den SHALL köra samma idempotenta import från exportfilen, spara nya rader och lägga till deras diagrammarkeringar och beräkningar i den öppna vyn utan omstart. Listans rubrik SHALL vara `Transaktioner`.
 
 #### Scenario: Förhandsgranska import
 

@@ -6,6 +6,7 @@ Run without arguments for a preview. Pass --apply to import mapped rows.
 
 import argparse
 import csv
+from collections import Counter
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import os
 from pathlib import Path
@@ -14,7 +15,7 @@ import tempfile
 
 SOURCE_FILE = Path.home() / "Downloads" / "transactions-and-notes-export (1).csv"
 TARGET_FILE = Path(__file__).with_name("aktiekop.csv")
-FIELDNAMES = ["date", "transaction_type", "ticker", "quantity", "price", "commission"]
+FIELDNAMES = ["date", "transaction_type", "ticker", "quantity", "price", "commission", "source_id", "amount_currency"]
 
 # Match the broker's Värdepapper text exactly. ISIN is deliberately not used.
 SECURITY_TO_TICKER = {
@@ -28,6 +29,7 @@ SECURITY_TO_TICKER = {
     "Nordea": "NDA-SE.ST", "Saab": "SAAB-B.ST", "SAAB B": "SAAB-B.ST",
     "Sandvik": "SAND.ST", "SEB": "SEB-A.ST", "Skanska": "SKA-B.ST",
     "SKF": "SKF-B.ST", "SCA": "SCA-B.ST", "Handelsbanken": "SHB-A.ST",
+    "Tele2 B": "TEL2-B.ST",
     "Swedbank": "SWED-A.ST", "Tele2": "TEL2-B.ST", "Telia": "TELIA.ST",
     "Volvo": "VOLV-B.ST", "Volvo B": "VOLV-B.ST",
     "Berkshire Hathaway B": "BRK-B", "Latour B": "LATO-B.ST",
@@ -56,6 +58,8 @@ def read_existing() -> list[dict[str, str]]:
     for row in rows:
         row["transaction_type"] = (row.get("transaction_type") or "KÖP").upper()
         row["commission"] = row.get("commission") or "0"
+        row["source_id"] = row.get("source_id") or ""
+        row["amount_currency"] = row.get("amount_currency") or ""
     return rows
 
 
@@ -64,6 +68,7 @@ def signature(row: dict[str, str]) -> tuple[str, ...]:
         row["date"], (row.get("transaction_type") or "KÖP").upper(), row["ticker"],
         canonical_decimal(row["quantity"]), canonical_decimal(row["price"]),
         canonical_decimal(row.get("commission") or "0"),
+        (row.get("amount_currency") or "").upper(),
     )
 
 
@@ -83,25 +88,41 @@ def convert_source() -> tuple[list[dict[str, str]], list[str]]:
             if not ticker:
                 warnings.append(f"Rad {row_number}: okänt värdepapper {security!r}; hoppas över.")
                 continue
-            transaction_type = {"KÖPT": "KÖP", "SÅLT": "SÄLJ"}.get(row[5].strip().upper())
+            source_type = row[5].strip().upper()
+            is_dividend = "UTDELNING" in source_type or "KÄLLSKATT" in source_type
+            transaction_type = {"KÖPT": "KÖP", "SÅLT": "SÄLJ"}.get(source_type)
+            if is_dividend:
+                transaction_type = "UTDELNING"
             if not transaction_type:
                 warnings.append(f"Rad {row_number}: okänd transaktionstyp {row[5]!r}; hoppas över.")
                 continue
             try:
                 trade_date = row[2].strip() or row[1].strip()  # Affärsdag, fallback Bokföringsdag.
-                quantity = decimal_value(row[8])
-                price = decimal_value(row[9])
-                commission = decimal_value(row[26] or "0")
-                fee_currency = row[27].strip().upper()
                 target_currency = TICKER_CURRENCY.get(ticker, "SEK" if ticker.endswith(".ST") else "")
-                if ticker == "BRK-B":
-                    # Brokerkursen står i utländsk valuta; lagra kostnaden i SEK i appen.
-                    price *= decimal_value(row[21])
-                if fee_currency and target_currency and fee_currency != target_currency:
-                    rate = decimal_value(row[21])  # SEK per unit of trade currency.
-                    if rate <= 0:
-                        raise ValueError("växlingskurs saknas för courtagekonvertering")
-                    commission /= rate
+                rate = decimal_value(row[21] or "0")
+                amount_currency = ""
+                if is_dividend:
+                    # Preserve the currency of the cash credit. It can differ from
+                    # the stock's trading currency (for example, SEK for a US stock).
+                    amount = decimal_value(row[13])
+                    amount_currency = (row[14] or row[12]).strip().upper() or target_currency
+                    if "KÄLLSKATT" in source_type and amount > 0:
+                        amount = -amount
+                    price = amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    quantity = Decimal("1")
+                    commission = Decimal("0")
+                else:
+                    quantity = decimal_value(row[8])
+                    price = decimal_value(row[9])
+                    commission = decimal_value(row[26] or "0")
+                    fee_currency = row[27].strip().upper()
+                    if ticker == "BRK-B":
+                        # Brokerkursen står i utländsk valuta; lagra kostnaden i SEK i appen.
+                        price *= rate
+                    if fee_currency and target_currency and fee_currency != target_currency:
+                        if rate <= 0:
+                            raise ValueError("växlingskurs saknas för courtagekonvertering")
+                        commission /= rate
                 commission = commission.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 entry = {
                     "date": trade_date,
@@ -110,6 +131,8 @@ def convert_source() -> tuple[list[dict[str, str]], list[str]]:
                     "quantity": format(quantity.normalize(), "f"),
                     "price": format(price.normalize(), "f"),
                     "commission": format(commission, ".2f"),
+                    "source_id": row[0].strip(),
+                    "amount_currency": amount_currency,
                 }
                 signature(entry)
                 converted.append(entry)
@@ -132,23 +155,56 @@ def write_rows(rows: list[dict[str, str]]) -> None:
             temp_path.unlink()
 
 
+def prepare_import() -> dict[str, object]:
+    source_rows, warnings = convert_source()
+    existing = read_existing()
+    known_source_ids = {row.get("source_id", "") for row in existing if row.get("source_id")}
+    legacy_signatures = Counter(signature(row) for row in existing if not row.get("source_id"))
+    source_signatures_without_id: set[tuple[str, ...]] = set()
+    new_rows, duplicates = [], 0
+    for row in source_rows:
+        key = signature(row)
+        source_id = row.get("source_id", "")
+        if source_id and source_id in known_source_ids:
+            duplicates += 1
+            continue
+        # Older imports and manually entered rows have no source ID. Match those
+        # once by their transaction details, then use source IDs for future imports.
+        if legacy_signatures[key] > 0:
+            legacy_signatures[key] -= 1
+            if source_id:
+                known_source_ids.add(source_id)
+            duplicates += 1
+            continue
+        if not source_id and key in source_signatures_without_id:
+            duplicates += 1
+            continue
+        if source_id:
+            known_source_ids.add(source_id)
+        else:
+            source_signatures_without_id.add(key)
+        new_rows.append(row)
+    return {
+        "converted": len(source_rows),
+        "duplicates": duplicates,
+        "new_rows": new_rows,
+        "existing": existing,
+        "warnings": warnings,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Spara transaktionerna i aktiekop.csv")
     args = parser.parse_args()
-    source_rows, warnings = convert_source()
-    existing = read_existing()
-    known = {signature(row) for row in existing}
-    new_rows, duplicates = [], 0
-    for row in source_rows:
-        key = signature(row)
-        if key in known:
-            duplicates += 1
-            continue
-        known.add(key)
-        new_rows.append(row)
+    result = prepare_import()
+    source_rows = int(result["converted"])
+    duplicates = int(result["duplicates"])
+    new_rows = result["new_rows"]
+    existing = result["existing"]
+    warnings = result["warnings"]
     print(f"Källfil: {SOURCE_FILE}")
-    print(f"Konverterbara transaktioner: {len(source_rows)}")
+    print(f"Konverterbara transaktioner: {source_rows}")
     print(f"Dubbletter som hoppas över: {duplicates}")
     print(f"Nya transaktioner: {len(new_rows)}")
     if warnings:

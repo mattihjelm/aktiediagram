@@ -29,7 +29,7 @@ Registrerade transaktioner sparas i `aktiekop.csv` i projektmappen. Filen ignore
 
 ## Importera mäklartransaktioner
 
-`konvertera_aktiekop.py` visar en förhandsgranskning utan att ändra köpfilen:
+`konvertera_aktiekop.py` visar en förhandsgranskning utan att ändra transaktionsfilen. Verktyget importerar köp, försäljningar, utdelningar och källskatt:
 
 ```sh
 python3 konvertera_aktiekop.py
@@ -41,7 +41,9 @@ För att lägga till nya transaktioner efter granskning:
 python3 konvertera_aktiekop.py --apply
 ```
 
-Verktyget förväntar sig exportfilen `transactions-and-notes-export (1).csv` i användarens Downloads-mapp.
+Verktyget förväntar sig exportfilen `transactions-and-notes-export (1).csv` i användarens Downloads-mapp. Exportens transaktions-ID sparas så att samma export kan importeras igen utan dubbletter. Äldre importer utan ID jämförs med transaktionsdetaljerna.
+
+När diagrammet är öppet kan knappen **Importera aktiehändelser** göra samma import och lägga till nya köp, försäljningar och utdelningar i den aktuella vyn.
 
 ## Konfiguration
 
