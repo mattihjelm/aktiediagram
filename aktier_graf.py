@@ -780,11 +780,17 @@ refreshDataButton.addEventListener('click', async () => {
       const allStockTraces = purchaseGraph.data.filter(trace => trace.meta && trace.meta.role === 'stock');
       const firstDate = allStockTraces.reduce((first, trace) => String(trace.x[0]).slice(0, 10) < first ? String(trace.x[0]).slice(0, 10) : first, '9999-12-31');
       const lastDate = allStockTraces.reduce((last, trace) => String(trace.x[trace.x.length - 1]).slice(0, 10) > last ? String(trace.x[trace.x.length - 1]).slice(0, 10) : last, '0000-01-01');
-      await Plotly.relayout(purchaseGraph, {'xaxis.rangeslider.range': [firstDate, lastDate]});
+      const axisRange = purchaseGraph._fullLayout.xaxis.range.map(toIsoDate);
+      allowedEndDate = lastDate > allowedEndDate ? lastDate : allowedEndDate;
+      await Plotly.relayout(purchaseGraph, {
+        'xaxis.range': [axisRange[0], lastDate],
+        'xaxis.rangeslider.range': [firstDate, lastDate],
+      });
       updatedTickers.forEach(ticker => window.refreshProfitLabel(ticker, false));
       window.renderCustomLegend();
       window.renderPortfolioSummary();
       window.rebaseVisibleStockGraph({});
+      if (window.syncVisibleDateInputs) window.syncVisibleDateInputs();
       refreshDataStatus.textContent = `${indices.length} aktier uppdaterade med slutkurser t.o.m. ${latestDate}.`;
     } else {
       refreshDataStatus.textContent = 'Inga senare slutkurser tillgängliga ännu.';
@@ -1437,8 +1443,7 @@ def main() -> None:
         showlegend=False,
         margin={"r": 145},
     )
-    current_month_end = pd.Timestamp(date.today()) + pd.offsets.MonthEnd(0)
-    visible_end = max(comparison.index.max(), current_month_end)
+    visible_end = comparison.index.max()
     figure.update_xaxes(
         range=[INITIAL_VISIBLE_START, visible_end],
         hoverformat="%Y-%m-%d",

@@ -32,7 +32,12 @@ Diagrammets titel SHALL avslutas med versionen `vÅÅÅÅ.N · <kort Git-ID>`, d
 - **WHEN** appen har hämtat historiska kurser för aktierna
 - **THEN** diagrammet visar deras indexutveckling i samma koordinatsystem
 - **AND** synligt startdatum är som standard 2020-01-01
-- **AND** slutet sträcker sig minst till slutet av innevarande månad
+- **AND** slutdatumet är den senaste tillgängliga slutkursens datum utan framtida tomt intervall
+
+#### Scenario: Visa aktuell kurs till och med dagens datum
+
+- **WHEN** användaren hämtar en aktuell intradagskurs efter dagens slutkursdatum
+- **THEN** diagrammets högra gräns och slutdatumfält utökas till intradagskursens datum
 
 #### Scenario: Ändra synligt datumintervall
 
