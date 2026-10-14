@@ -8,12 +8,13 @@ import argparse
 import csv
 from collections import Counter
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import io
 import os
 from pathlib import Path
 import tempfile
 
 
-SOURCE_FILE = Path.home() / "Downloads" / "transactions-and-notes-export (1).csv"
+SOURCE_FILE = Path.home() / "Downloads" / "transactions-and-notes-export.csv"
 TARGET_FILE = Path(__file__).with_name("aktiekop.csv")
 FIELDNAMES = ["date", "transaction_type", "ticker", "quantity", "price", "commission", "source_id", "amount_currency"]
 
@@ -72,9 +73,15 @@ def signature(row: dict[str, str]) -> tuple[str, ...]:
     )
 
 
-def convert_source() -> tuple[list[dict[str, str]], list[str]]:
-    with SOURCE_FILE.open("r", encoding="utf-16", newline="") as file:
-        reader = csv.reader(file, delimiter="\t")
+def convert_source(
+    source_file: Path = SOURCE_FILE, source_bytes: bytes | None = None,
+) -> tuple[list[dict[str, str]], list[str]]:
+    if source_bytes is None:
+        source = source_file.open("r", encoding="utf-16", newline="")
+    else:
+        source = io.StringIO(source_bytes.decode("utf-16"), newline="")
+    with source:
+        reader = csv.reader(source, delimiter="\t")
         next(reader, None)  # Duplicate Valuta headers are handled by fixed positions.
         converted, warnings = [], []
         for row_number, row in enumerate(reader, start=2):
@@ -155,8 +162,10 @@ def write_rows(rows: list[dict[str, str]]) -> None:
             temp_path.unlink()
 
 
-def prepare_import() -> dict[str, object]:
-    source_rows, warnings = convert_source()
+def prepare_import(
+    source_file: Path = SOURCE_FILE, source_bytes: bytes | None = None,
+) -> dict[str, object]:
+    source_rows, warnings = convert_source(source_file, source_bytes)
     existing = read_existing()
     known_source_ids = {row.get("source_id", "") for row in existing if row.get("source_id")}
     legacy_signatures = Counter(signature(row) for row in existing if not row.get("source_id"))

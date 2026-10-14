@@ -19,7 +19,7 @@ python3 -m pip install -r requirements.txt
 python3 aktier_graf.py
 ```
 
-Appen läser aktier och initial synlighet från `aktier.csv`, hämtar historik från 2010 och öppnar diagrammet i webbläsaren. Dagskurser används först efter respektive börsstängning och en kort publiceringsmarginal. Knappen **Hämta slutkurser** hämtar senare tillgängliga dagskurser från Yahoo Finance. **Hämta aktuell kurs** hämtar senaste tillgängliga intradagskurs och uppdaterar diagrammet, legenden och vinst/förlust-tabellen. Den lokala servern stoppas med Ctrl+C i terminalen. `aktier_graf.html` skapas som en statisk kopia; formuläret och knapparna för datauppdatering använder den lokala servern.
+Appen läser aktier och initial synlighet från `aktier.csv`, hämtar historik från 2010 och öppnar diagrammet i webbläsaren. Titelraden visar versionsnummer på formatet `vÅÅÅÅ.N · <kort Git-ID>`, där N är det ökande antalet Git-commits. Dagskurser används först efter respektive börsstängning och en kort publiceringsmarginal. Knappen **Hämta slutkurser** hämtar senare tillgängliga dagskurser från Yahoo Finance. **Hämta aktuell kurs** hämtar senaste tillgängliga intradagskurs och uppdaterar diagrammet, legenden och resultattabellen. Den lokala servern stoppas med Ctrl+C i terminalen. `aktier_graf.html` skapas som en statisk kopia; formuläret och knapparna för datauppdatering använder den lokala servern.
 
 Start- och slutdatum för det synliga diagramintervallet kan anges direkt i ISO-format (`ÅÅÅÅ-MM-DD`) eller ändras med handtagen i diagrammets nedre datumreglage. Fälten och reglaget hålls synkroniserade.
 
@@ -41,9 +41,9 @@ För att lägga till nya transaktioner efter granskning:
 python3 konvertera_aktiekop.py --apply
 ```
 
-Verktyget förväntar sig exportfilen `transactions-and-notes-export (1).csv` i användarens Downloads-mapp. Exportens transaktions-ID sparas så att samma export kan importeras igen utan dubbletter. Äldre importer utan ID jämförs med transaktionsdetaljerna.
+Standardfilen är `transactions-and-notes-export.csv` i användarens Downloads-mapp. I appen går det även att välja en annan exportfil bredvid knappen **Importera aktiehändelser**. Exportens transaktions-ID sparas så att samma export kan importeras igen utan dubbletter. Äldre importer utan ID jämförs med transaktionsdetaljerna.
 
-När diagrammet är öppet kan knappen **Importera aktiehändelser** göra samma import och lägga till nya köp, försäljningar och utdelningar i den aktuella vyn.
+När diagrammet är öppet kan knappen **Importera aktiehändelser** använda standardfilen eller den valda filen och lägga till nya köp, försäljningar och utdelningar i den aktuella vyn.
 
 ## Konfiguration
 

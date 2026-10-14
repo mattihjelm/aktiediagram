@@ -25,6 +25,8 @@ Appen SHALL läsa aktietickrar, visningsnamn och initial synlighet från `aktier
 
 Appen SHALL hämta justerade dagskurser från Yahoo Finance med historik från 2010-01-01. Dagens kurs SHALL endast inkluderas efter respektive börsstängning och en kort publiceringsmarginal. Kurserna SHALL visas som separata kurvor i ett gemensamt diagram. Varje kurva SHALL indexeras till 100 vid den första tillgängliga kursen inom det synliga datumintervallet. Berkshire Hathaway B (`BRK-B`) SHALL räknas om från USD till SEK med hämtad USD/SEK-kurs. Aktier utan användbar kursdata SHALL hoppas över utan att stoppa övriga diagrammet.
 
+Diagrammets titel SHALL avslutas med versionen `vÅÅÅÅ.N · <kort Git-ID>`, där året är innevarande år och N är ett ökande löpnummer baserat på antalet Git-commits.
+
 #### Scenario: Starta diagrammet
 
 - **WHEN** appen har hämtat historiska kurser för aktierna
@@ -192,7 +194,7 @@ Registrerade utdelningar SHALL räknas som kontant avkastning i SEK-resultatet, 
 
 `konvertera_aktiekop.py` SHALL läsa den förväntade UTF-16-kodade tabbseparerade transaktionsexporten från Downloads, mappa kolumnen `Värdepapper` till appens ticker och omvandla köp, försäljningar och utdelningar till appens CSV-format. ISIN SHALL inte användas som ticker. Berkshire-kursen i källan SHALL omvandlas till SEK med exportens växlingskurs. Utdelningens kontantbelopp SHALL importeras som utdelning utan att påverka antal eller anskaffningsvärde; källskatt SHALL registreras som negativ utdelning. Exportens transaktions-ID SHALL sparas för idempotent återimport. Äldre importer utan transaktions-ID SHALL dedupliceras med datum, typ, ticker, antal, kurs och courtage. Programmet SHALL som standard endast visa en förhandsgranskning och SHALL bara skriva till `aktiekop.csv` med explicit `--apply`.
 
-Diagrammets transaktionslista SHALL ha knappen `Importera aktiehändelser`. Den SHALL köra samma idempotenta import från exportfilen, spara nya rader och lägga till deras diagrammarkeringar och beräkningar i den öppna vyn utan omstart. Listans rubrik SHALL vara `Transaktioner`.
+Diagrammets transaktionslista SHALL ha knappen `Importera aktiehändelser` och ett filval bredvid den. Om filvalet är tomt SHALL standardfilen `~/Downloads/transactions-and-notes-export.csv` användas; en vald UTF-16-export SHALL läsas direkt. Importen SHALL vara idempotent, spara nya rader och lägga till diagrammarkeringar och beräkningar i den öppna vyn utan omstart. Listans rubrik SHALL vara `Transaktioner`.
 
 #### Scenario: Förhandsgranska import
 

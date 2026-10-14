@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import subprocess
 from zoneinfo import ZoneInfo
 import webbrowser
 
@@ -158,7 +159,26 @@ def quantity_in_current_shares(ticker: str, transaction_date: str, quantity: flo
     return quantity
 
 
-def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: set[str]) -> str:
+def app_version_suffix() -> str:
+    year = date.today().year
+    repository = Path(__file__).resolve().parent
+    try:
+        commit = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "--short=7", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        count = subprocess.run(
+            ["git", "-C", str(repository), "rev-list", "--count", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        return f"v{year}.{int(count)} · {commit}"
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return f"v{year}.0 · no-git"
+
+
+def make_purchase_panel(
+    stocks: list[dict[str, str | bool]], available_tickers: set[str], version_suffix: str,
+) -> str:
     options = "".join(
         f'<option value="{stock["ticker"]}">{stock["name"]}</option>'
         for stock in stocks
@@ -228,8 +248,10 @@ def make_purchase_panel(stocks: list[dict[str, str | bool]], available_tickers: 
   #purchase-total { align-self: end; white-space: nowrap; margin: 0 0 8px; font-weight: 600; color: #263448; }
   #purchase-list { width: fit-content; max-width: calc(100% - 92px); box-sizing: border-box; margin-top: 12px; margin-right: 0; margin-bottom: 28px; padding: 0; border: 0; font: 15px sans-serif; }
   #purchase-list h2 { margin: 0; font-size: 19px; }
-  .transaction-list-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .transaction-list-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
   #import-events-button { padding: 7px 11px; cursor: pointer; white-space: nowrap; }
+  #import-events-file { max-width: 280px; font: 14px sans-serif; }
+  #import-events-default { flex-basis: 100%; color: #576273; font-size: 12px; }
   #import-events-status { min-height: 1.2em; margin: 0 0 8px; color: #435064; }
   #purchase-list table { width: max-content; max-width: 100%; border-collapse: collapse; text-align: left; }
   #purchase-list th, #purchase-list td { padding: 7px 9px; border-bottom: 1px solid #e1e5eb; white-space: nowrap; }
@@ -255,7 +277,7 @@ const chartLayout = document.createElement('div');
 chartLayout.id = 'stock-chart-layout';
 const chartTitle = document.createElement('h1');
 chartTitle.id = 'stock-chart-title';
-chartTitle.textContent = 'Aktiernas utveckling (index 100 vid synligt startdatum)';
+chartTitle.textContent = 'Aktiernas utveckling (index 100 vid synligt startdatum) · __VERSION_SUFFIX__';
 const refreshControls = document.createElement('div');
 refreshControls.id = 'refresh-controls';
 const refreshButton = document.createElement('button');
@@ -310,7 +332,7 @@ topControlsRow.id = 'top-controls-row';
 topControlsRow.append(purchasePanel, refreshControls);
 const purchaseList = document.createElement('section');
 purchaseList.id = 'purchase-list';
-purchaseList.innerHTML = '<div class="transaction-list-heading"><h2>Transaktioner</h2><button id="import-events-button" type="button">Importera aktiehändelser</button></div><p id="import-events-status" role="status"></p><div id="purchase-list-content"></div>';
+purchaseList.innerHTML = '<div class="transaction-list-heading"><h2>Transaktioner</h2><button id="import-events-button" type="button">Importera aktiehändelser</button><input id="import-events-file" type="file" accept=".csv,text/csv" aria-label="Välj CSV-fil med aktiehändelser"><span id="import-events-default">Standard: ~/Downloads/transactions-and-notes-export.csv</span></div><p id="import-events-status" role="status"></p><div id="purchase-list-content"></div>';
 const portfolioSummary = document.createElement('section');
 portfolioSummary.id = 'portfolio-summary';
 portfolioSummary.innerHTML = '<h2>Resultat</h2><div id="portfolio-summary-content" class="transaction-table-content"></div>';
@@ -583,11 +605,11 @@ window.renderPortfolioSummary = function() {
     return;
   }
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Aktie</th><th>Datum</th><th>Antal</th><th>Senaste kurs</th><th>Värde</th><th>Värde SEK</th><th>GAV (genomsnittligt anskaffningsvärde)</th><th>Resultat (kr)</th><th>Resultat (%)</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Aktie</th><th>Datum</th><th>Antal</th><th>Senaste kurs</th><th>GAV (genomsnittligt anskaffningsvärde)</th><th>Resultat (kr)</th><th>Resultat (%)</th><th>Värde</th><th>Värde SEK</th></tr></thead>';
   const body = document.createElement('tbody');
   rows.forEach(row => {
     const tr = document.createElement('tr');
-    [row.name, row.date, row.quantity, row.price, row.value, row.valueSek, row.gav, row.profit, row.percent].forEach((value, index) => {
+    [row.name, row.date, row.quantity, row.price, row.gav, row.profit, row.percent, row.value, row.valueSek].forEach((value, index) => {
       const td = document.createElement('td');
       td.textContent = value;
       if (index > 1) td.className = 'number';
@@ -610,12 +632,19 @@ window.addEventListener('resize', () => requestAnimationFrame(window.syncTransac
 window.renderPurchaseList();
 window.renderPortfolioSummary();
 const importEventsButton = document.getElementById('import-events-button');
+const importEventsFile = document.getElementById('import-events-file');
 const importEventsStatus = document.getElementById('import-events-status');
 importEventsButton.addEventListener('click', async () => {
   importEventsButton.disabled = true;
   importEventsStatus.textContent = 'Importerar aktiehändelser…';
   try {
-    const response = await fetch('/api/import-events', {method: 'POST'});
+    const selectedFile = importEventsFile.files && importEventsFile.files[0];
+    const request = {method: 'POST'};
+    if (selectedFile) {
+      request.headers = {'Content-Type': 'application/octet-stream'};
+      request.body = await selectedFile.arrayBuffer();
+    }
+    const response = await fetch('/api/import-events', request);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Importen misslyckades.');
     const grouped = new Map();
@@ -817,7 +846,9 @@ purchaseForm.addEventListener('submit', async event => {
 });
 </script>
 """
-    return panel.replace("__OPTIONS__", options).replace("__TODAY__", date.today().isoformat())
+    return (panel.replace("__OPTIONS__", options)
+            .replace("__TODAY__", date.today().isoformat())
+            .replace("__VERSION_SUFFIX__", version_suffix))
 
 
 def run_local_chart_server(
@@ -828,7 +859,7 @@ def run_local_chart_server(
 ) -> None:
     """Servera diagrammet lokalt så köpformuläret kan spara CSV-filen."""
     available_tickers = set(price_series_by_ticker)
-    options_panel = make_purchase_panel(stocks, available_tickers)
+    options_panel = make_purchase_panel(stocks, available_tickers, app_version_suffix())
     page = chart_html.replace("</body>", options_panel + "</body>")
 
     class RequestHandler(BaseHTTPRequestHandler):
@@ -846,7 +877,13 @@ def run_local_chart_server(
         def do_POST(self) -> None:
             if self.path == "/api/import-events":
                 try:
-                    prepared = prepare_import()
+                    source_bytes = None
+                    if self.headers.get("Content-Type", "").startswith("application/octet-stream"):
+                        payload_length = int(self.headers.get("Content-Length", "0"))
+                        if payload_length <= 0 or payload_length > 20 * 1024 * 1024:
+                            raise ValueError("Välj en CSV-fil som är större än 0 byte och mindre än 20 MB.")
+                        source_bytes = self.rfile.read(payload_length)
+                    prepared = prepare_import(source_bytes=source_bytes)
                     existing = prepared["existing"]
                     new_rows = prepared["new_rows"]
                     if new_rows:
