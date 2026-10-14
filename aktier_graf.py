@@ -391,12 +391,28 @@ document.getElementById('purchase-commission').addEventListener('change', event 
     window.updatePurchaseTotal();
   }
 });
+window.updateSuggestedCommission = function() {
+  const quantity = parsePurchaseNumber(document.getElementById('purchase-quantity').value);
+  const price = parsePurchaseNumber(document.getElementById('purchase-price').value);
+  if (!(quantity > 0) || !(price > 0)) return;
+  // Courtaget anges i aktiens inmatningsvaluta; procentsatsen är densamma
+  // efter SEK-konvertering och värdet sparas med två decimaler.
+  const commission = Math.round(quantity * price * 0.0025 * 100) / 100;
+  document.getElementById('purchase-commission').value = commission.toLocaleString('sv-SE', {
+    useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2,
+  });
+  window.updatePurchaseTotal();
+};
+['purchase-quantity', 'purchase-price'].forEach(id =>
+  document.getElementById(id).addEventListener('input', window.updateSuggestedCommission)
+);
 document.getElementById('purchase-price').addEventListener('change', event => {
   const value = parsePurchaseNumber(event.target.value);
   if (Number.isFinite(value) && value > 0) {
     event.target.value = value.toLocaleString('sv-SE', {
       useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2,
     });
+    window.updateSuggestedCommission();
     window.updatePurchaseTotal();
   }
 });
@@ -1414,6 +1430,7 @@ window.suggestPurchasePrice = function() {
       const price = rawPrice * fxFactor;
   if (Number.isFinite(price) && price > 0) {
     document.getElementById('purchase-price').value = price.toLocaleString('sv-SE', {useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2});
+    if (window.updateSuggestedCommission) window.updateSuggestedCommission();
     if (window.updatePurchaseTotal) window.updatePurchaseTotal();
   }
 };
