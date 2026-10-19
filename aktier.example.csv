@@ -1,0 +1,40 @@
+ticker,name,show_initially
+BRK-B,Berkshire,false
+LATO-B.ST,Latour B,false
+NDAQ,Nasdaq,false
+ELUX-B.ST,Electrolux B,false
+SIRI,Sirius XM,false
+RHM.DE,Rheinmetall,false
+RIVN,Rivian Automotive A,false
+ABB.ST,ABB,false
+ADDT-B.ST,Addtech,false
+ALFA.ST,Alfa Laval,false
+ASSA-B.ST,Assa Abloy,false
+AZN.ST,AstraZeneca,true
+ATCO-B.ST,Atlas Copco,false
+BOL.ST,Boliden,true
+CIBUS.ST,Cibus Real Estate,false
+EPI-B.ST,Epiroc,false
+EQT.ST,EQT,false
+ERIC-B.ST,Ericsson,false
+ESSITY-B.ST,Essity,false
+EVO.ST,Evolution,false
+HM-B.ST,H&M,false
+HEXA-B.ST,Hexagon,false
+INDU-C.ST,Industrivärden C,false
+INDU-A.ST,Industrivärden A,true
+INVE-B.ST,Investor,false
+LIFCO-B.ST,Lifco,false
+NIBE-B.ST,NIBE,false
+NDA-SE.ST,Nordea,false
+SAAB-B.ST,Saab,true
+SAND.ST,Sandvik,true
+SEB-A.ST,SEB,false
+SKA-B.ST,Skanska,false
+SKF-B.ST,SKF,false
+SCA-B.ST,SCA,false
+SHB-A.ST,Handelsbanken,false
+SWED-A.ST,Swedbank,false
+TEL2-B.ST,Tele2,true
+TELIA.ST,Telia,false
+VOLV-B.ST,Volvo,false

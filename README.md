@@ -47,4 +47,10 @@ När diagrammet är öppet kan knappen **Importera aktiehändelser** använda st
 
 ## Konfiguration
 
-Redigera `aktier.csv` för att ändra aktier, visningsnamn och vilka kurvor som syns från början. Appen stöder upp till 50 aktier.
+Aktielistan läses från `aktier.csv`. Filen ignoreras av Git och skapas från `aktier.example.csv` vid första start. Redigera `aktier.csv` för att ändra aktier, visningsnamn och vilka kurvor som syns från början. Appen stöder upp till 50 aktier.
+
+Det senast visade datumintervallet sparas lokalt i `aktievy.json`, som också ignoreras av Git.
+
+## Licens
+
+[MIT](LICENSE)

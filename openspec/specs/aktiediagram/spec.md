@@ -8,13 +8,19 @@ Beskriver den befintliga lokala aktieappen: hämtning och jämförelse av aktiek
 
 ### Requirement: Konfigurerbar aktielista
 
-Appen SHALL läsa aktietickrar, visningsnamn och initial synlighet från `aktier.csv` i samma katalog som Python-programmet. Rader utan ticker SHALL ignoreras. Listan SHALL stödja högst 50 aktier. Ticker och visningsnamn SHALL vara unika. Initial synlighet SHALL kunna anges som `true`/`false`, `ja`/`nej` eller `1`/`0`. Ogiltig konfiguration SHALL ge ett begripligt fel.
+Appen SHALL läsa aktietickrar, visningsnamn och initial synlighet från `aktier.csv` i samma katalog som Python-programmet. Om `aktier.csv` saknas SHALL den skapas som en kopia av `aktier.example.csv`. Rader utan ticker SHALL ignoreras. Listan SHALL stödja högst 50 aktier. Ticker och visningsnamn SHALL vara unika. Initial synlighet SHALL kunna anges som `true`/`false`, `ja`/`nej` eller `1`/`0`. Ogiltig konfiguration SHALL ge ett begripligt fel.
 
 #### Scenario: Läs aktier från konfiguration
 
 - **WHEN** appen startar med en giltig `aktier.csv`
 - **THEN** varje aktie med ticker blir tillgänglig i diagrammet och i transaktionsformuläret
 - **AND** initial synlighet följer aktiens `show_initially`-värde
+
+#### Scenario: Första start utan lokal aktielista
+
+- **WHEN** appen startar och `aktier.csv` saknas
+- **THEN** `aktier.csv` skapas från `aktier.example.csv`
+- **AND** appen läser aktierna från den nya filen
 
 #### Scenario: Ogiltig eller för stor konfiguration
 

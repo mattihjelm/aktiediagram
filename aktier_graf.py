@@ -1,4 +1,4 @@
-"""Jämför ABB.ST, BRK-B och SCA-B.ST i ett gemensamt diagram."""
+"""Jämför aktiekurser i ett interaktivt diagram med köp, sälj och portföljresultat."""
 
 from datetime import date, datetime, time, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import shutil
 import subprocess
 from threading import Lock
 from zoneinfo import ZoneInfo
@@ -19,6 +20,7 @@ from konvertera_aktiekop import prepare_import, write_rows
 
 
 STOCK_LIST_FILE = Path(__file__).with_name("aktier.csv")
+STOCK_LIST_EXAMPLE_FILE = Path(__file__).with_name("aktier.example.csv")
 VIEW_RANGE_FILE = Path(__file__).with_name("aktievy.json")
 PURCHASES_FILE = Path(__file__).with_name("aktiekop.csv")
 MAX_STOCKS = 50
@@ -34,6 +36,9 @@ FX_TICKERS = {"USD": "USDSEK=X", "EUR": "EURSEK=X"}
 
 def load_stocks() -> list[dict[str, str | bool]]:
     """Läs aktielista och initial synlighet från aktier.csv."""
+    # Den lokala listan skapas från exempelfilen vid första start.
+    if not STOCK_LIST_FILE.exists():
+        shutil.copyfile(STOCK_LIST_EXAMPLE_FILE, STOCK_LIST_FILE)
     stocks = []
     with STOCK_LIST_FILE.open("r", encoding="utf-8-sig", newline="") as file:
         for row_number, row in enumerate(csv.DictReader(file), start=2):

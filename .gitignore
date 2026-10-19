@@ -1,6 +1,10 @@
 # Lokala köp- och säljtransaktioner innehåller privata ekonomiska uppgifter.
 aktiekop.csv
 
+# Lokal aktielista och vyinställning som appen skriver till; mallen är aktier.example.csv.
+aktier.csv
+aktievy.json
+
 # Genererade diagram och hämtade kursdata.
 aktier_graf.html
 *_historiska_kurser.csv
