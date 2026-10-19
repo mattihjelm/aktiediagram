@@ -19,7 +19,7 @@ python3 -m pip install -r requirements.txt
 python3 aktier_graf.py
 ```
 
-Appen läser aktier och initial synlighet från `aktier.csv`, hämtar historik från 2010 och öppnar diagrammet i webbläsaren. Titelraden visar versionsnummer på formatet `vÅÅÅÅ.N · <kort Git-ID>`, där N är det ökande antalet Git-commits. Dagskurser används först efter respektive börsstängning och en kort publiceringsmarginal. Knappen **Hämta slutkurser** hämtar senare tillgängliga dagskurser från Yahoo Finance. **Hämta aktuell kurs** hämtar senaste tillgängliga intradagskurs och uppdaterar diagrammet, legenden och resultattabellen. Den lokala servern stoppas med Ctrl+C i terminalen. `aktier_graf.html` skapas som en statisk kopia; formuläret och knapparna för datauppdatering använder den lokala servern.
+Appen läser aktier och initial synlighet från `aktier.csv`, hämtar historik från 2010 och öppnar diagrammet i webbläsaren. Titelraden visar tidsstämpeln för den senast ändrade filen i appkatalogen, exklusive Git-metadata, Python-cache och genererad HTML. Dagskurser används först efter respektive börsstängning och en kort publiceringsmarginal. Knappen **Hämta slutkurser** hämtar senare tillgängliga dagskurser från Yahoo Finance. **Hämta aktuell kurs** hämtar senaste tillgängliga intradagskurs och uppdaterar diagrammet, legenden och resultattabellen. Den lokala servern stoppas med Ctrl+C i terminalen. `aktier_graf.html` skapas som en statisk kopia; formuläret och knapparna för datauppdatering använder den lokala servern.
 
 Start- och slutdatum för det synliga diagramintervallet kan anges direkt i ISO-format (`ÅÅÅÅ-MM-DD`) eller ändras med handtagen i diagrammets nedre datumreglage. Fälten och reglaget hålls synkroniserade.
 

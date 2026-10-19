@@ -25,7 +25,7 @@ Appen SHALL läsa aktietickrar, visningsnamn och initial synlighet från `aktier
 
 Appen SHALL hämta justerade dagskurser från Yahoo Finance med historik från 2010-01-01. Dagens kurs SHALL endast inkluderas efter respektive börsstängning och en kort publiceringsmarginal. Kurserna SHALL visas som separata kurvor i ett gemensamt diagram. Varje kurva SHALL indexeras till 100 vid den första tillgängliga kursen inom det synliga datumintervallet. Berkshire Hathaway B (`BRK-B`) SHALL räknas om från USD till SEK med hämtad USD/SEK-kurs. Aktier utan användbar kursdata SHALL hoppas över utan att stoppa övriga diagrammet.
 
-Diagrammets titel SHALL avslutas med versionen `vÅÅÅÅ.N · <kort Git-ID>`, där året är innevarande år och N är ett ökande löpnummer baserat på antalet Git-commits.
+Diagrammets titel SHALL visa tidsstämpeln för den senast ändrade filen i appkatalogen i lokalt tidsformat `ÅÅÅÅ-MM-DD HH:MM`, så att även ocommittade ändringar återspeglas. Git-metadata, Python-cache, vyinställningen i `aktievy.json` och den genererade HTML-filen SHALL inte påverka tidsstämpeln.
 
 #### Scenario: Starta diagrammet
 
@@ -33,6 +33,12 @@ Diagrammets titel SHALL avslutas med versionen `vÅÅÅÅ.N · <kort Git-ID>`, d
 - **THEN** diagrammet visar deras indexutveckling i samma koordinatsystem
 - **AND** synligt startdatum är som standard 2020-01-01
 - **AND** slutdatumet är den senaste tillgängliga slutkursens datum utan framtida tomt intervall
+
+#### Scenario: Visa aktuellt datum efter intradagsuppdatering
+
+- **WHEN** en aktuell kurs hämtas för en aktie
+- **THEN** diagrammets synliga slutdatum och nedre datumreglage utökas till dagens datum i svensk tidszon
+- **AND** aktier som inte har uppdaterats får inga syntetiska datapunkter för de saknade datumen
 
 #### Scenario: Visa aktuell kurs till och med dagens datum
 
@@ -54,6 +60,13 @@ Diagrammets titel SHALL avslutas med versionen `vÅÅÅÅ.N · <kort Git-ID>`, d
 - **WHEN** användaren i stället flyttar handtagen i datumreglaget
 - **THEN** start- och slutdatumfälten uppdateras så att de motsvarar det synliga intervallet
 - **AND** ogiltiga datum, datum utanför tillgänglig historik eller startdatum efter slutdatum accepteras inte
+
+#### Scenario: Återanvänd senaste datumintervall
+
+- **WHEN** användaren ändrar det synliga intervallet med datumfälten, datumreglaget eller zoomning
+- **THEN** start- och slutdatum sparas i `aktievy.json`
+- **WHEN** appen startas nästa gång
+- **THEN** det sparade intervallet används och begränsas till tillgänglig kurshistorik
 
 #### Scenario: Historik saknas för en aktie
 
@@ -79,12 +92,15 @@ Diagrammets titel SHALL avslutas med versionen `vÅÅÅÅ.N · <kort Git-ID>`, d
 
 ### Requirement: Kurvornas synlighet och legend
 
-Diagrammet SHALL visa en extern aktielegend med en solo-checkbox och klickbart aktienamn för varje tillgänglig aktie. Klick på aktienamnet SHALL växla kurvan och dess transaktionsmarkeringar av eller på. Solo SHALL visa endast den valda aktien och dess transaktioner, och avmarkering SHALL återställa synligheten från före sololäget. Kurvnamn vid kurvornas slut SHALL vara förbundna med sina slutpunkter av tunna svarta ledarlinjer och placeras så att etiketterna inte överlappa. Hovring över ett externt aktienamn SHALL tillfälligt öka motsvarande kurvas tjocklek från 2 px till 5 px. Legendens vinst/förlustinformation SHALL följa respektive aktienamn.
+Diagrammet SHALL visa en extern aktielegend med en solo-checkbox och klickbart aktienamn för varje tillgänglig aktie. Klick på aktienamnet SHALL växla kurvan och dess transaktionsmarkeringar av eller på och spara aktiens synlighet i `aktier.csv` så den används vid nästa start. Solo SHALL visa endast den valda aktien och dess transaktioner, och avmarkering SHALL återställa synligheten från före sololäget. Solo-läget SHALL inte ändra sparade synlighetsinställningar. Kurvnamn vid kurvornas slut SHALL vara förbundna med sina slutpunkter av tunna svarta ledarlinjer och placeras så att etiketterna inte överlappa. Hovring över ett externt aktienamn SHALL tillfälligt öka motsvarande kurvas tjocklek från 2 px till 5 px. Legendens vinst/förlustinformation SHALL följa respektive aktienamn.
+
+När solo väljs SHALL listorna `Transaktioner` och `Resultat` filtreras till den valda aktien om kryssrutan `Filtrera aktier enligt solo-val` är markerad. Kryssrutan SHALL vara markerad som standard. En separat kryssruta `Filtrera enligt diagramval` SHALL filtrera båda listorna till aktier vars kurvor är synliga i diagrammet och vara avmarkerad som standard. Båda filtren SHALL kunna användas samtidigt; då visas endast aktier som uppfyller båda valen. Listornas rubriker SHALL ligga på samma rad och deras kolumnrubriker SHALL linjeras vertikalt på breda skärmar.
 
 #### Scenario: Växla aktie
 
 - **WHEN** användaren klickar på en akties namn i den externa legenden
 - **THEN** aktiens kurva och köp-/säljmarkeringar växlas tillsammans
+- **AND** synligheten sparas i `aktier.csv` och återanvänds vid nästa start
 - **AND** y-axeln räknas om efter synliga aktier
 
 #### Scenario: Visa en aktie solo
@@ -93,6 +109,22 @@ Diagrammet SHALL visa en extern aktielegend med en solo-checkbox och klickbart a
 - **THEN** endast den aktiens kurva och transaktionsmarkeringar visas
 - **WHEN** användaren avmarkerar solo
 - **THEN** synligheten återställs till läget före solo-valet
+- **AND** sparade synlighetsvärden i `aktier.csv` lämnas oförändrade
+
+#### Scenario: Filtrera listor enligt solo-val
+
+- **WHEN** användaren markerar solo för en aktie och `Filtrera aktier enligt solo-val` är ikryssad
+- **THEN** både `Transaktioner` och `Resultat` visar endast den valda aktien
+- **WHEN** kryssrutan avmarkeras
+- **THEN** båda listorna visar alla aktier oavsett solo-val
+
+#### Scenario: Filtrera listor enligt diagramval
+
+- **WHEN** användaren markerar `Filtrera enligt diagramval`
+- **THEN** både `Transaktioner` och `Resultat` visar endast aktier vars kurvor är synliga
+- **AND** listorna uppdateras när användaren slår en kurva av eller på
+- **WHEN** kryssrutan avmarkeras
+- **THEN** diagrammets synlighet filtrerar inte listorna
 
 #### Scenario: Markera kurva med hovring
 
@@ -123,9 +155,9 @@ Hovring över diagrammet SHALL visa datum samt både aktiens kurs och dess index
 - **THEN** samtliga jämförelseetiketter tas bort
 - **AND** datumintervallet lämnas oförändrat
 
-### Requirement: Registrera och spara köp och sälj
+### Requirement: Registrera och spara aktiehändelser
 
-Appen SHALL erbjuda ett formulär för transaktionstyp (Köp/Sälj), aktie, datum, antal, kurs och courtage. Aktie och datum SHALL föreslå senast tillgänglig kurs på eller före valt datum; priset SHALL kunna redigeras och visas med två decimaler. Om användaren klickar på en kurva SHALL formuläret förifyllas med vald aktie, datum och kurs. Formuläret SHALL visa beräknat totalbelopp inklusive courtage för köp, respektive nettobelopp efter courtage för sälj. Giltiga transaktioner SHALL sparas i `aktiekop.csv` med semikolonseparerade kolumner `date`, `transaction_type`, `ticker`, `quantity`, `price`, `commission`; importerade transaktioner får även ha `source_id` och `amount_currency`. Kurs och courtage SHALL sparas till två decimaler. Ogiltiga värden eller okända aktier SHALL avvisas med ett begripligt fel.
+Appen SHALL erbjuda ett formulär med rubriken `Registrera aktiehändelse` och typerna Köp, Sälj och Utdelning. Köp och sälj SHALL ha aktie, datum, antal, kurs och courtage; utdelning SHALL ha aktie, datum, antal aktier, utdelning per aktie och källskatt. Aktie och datum SHALL föreslå senast tillgänglig kurs på eller före valt datum för köp och sälj. Om användaren klickar på en kurva SHALL formuläret förifyllas med vald aktie, datum och kurs, utom vid registrering av utdelning. Belopp per aktie och courtage/källskatt SHALL visas med två decimaler. Formuläret SHALL visa totalbelopp inklusive courtage för köp, nettobelopp efter courtage för sälj och totalt utdelningsbelopp efter källskatt. Giltiga händelser SHALL sparas i `aktiekop.csv` med semikolonseparerade kolumner `date`, `transaction_type`, `ticker`, `quantity`, `price`, `commission`; importerade händelser får även ha `source_id` och `amount_currency`. Ogiltiga värden eller okända aktier SHALL avvisas med ett begripligt fel.
 
 #### Scenario: Föreslå kurs
 
@@ -145,6 +177,13 @@ Appen SHALL erbjuda ett formulär för transaktionstyp (Köp/Sälj), aktie, datu
 - **THEN** transaktionen sparas som `SÄLJ`
 - **AND** den visas och påverkar portföljresultatet som en säljtransaktion
 
+#### Scenario: Registrera utdelning
+
+- **WHEN** användaren skickar in en giltig utdelning med antal aktier, utdelning per aktie och källskatt
+- **THEN** transaktionen sparas som `UTDELNING` med både antal och belopp per aktie
+- **AND** nettoutdelningen visas som antal gånger utdelning per aktie minus källskatt
+- **AND** utdelningen påverkar resultatet men inte innehavets antal eller anskaffningsvärde
+
 #### Scenario: Ogiltig transaktion
 
 - **WHEN** antal eller kurs inte är större än noll, courtage är negativt, datumet saknar tidigare kursdata eller ticker saknar hämtad kursserie
@@ -152,7 +191,7 @@ Appen SHALL erbjuda ett formulär för transaktionstyp (Köp/Sälj), aktie, datu
 
 ### Requirement: Visa transaktioner i diagram och lista
 
-Köp SHALL visas i huvuddiagrammet som små cirklar med mörk kontur. Sälj SHALL visas som nedåtriktade trianglar. Transaktionsmarkeringarna SHALL inte visas i det nedre översiktsdiagrammet/rangeslidern. Under diagrammet SHALL finnas en lista över registrerade transaktioner med datum, typ, aktie, antal, kurs, courtage och total- eller nettobelopp. Listan SHALL uppdateras direkt när en transaktion har sparats.
+Köp SHALL visas i huvuddiagrammet som små cirklar med mörk kontur. Sälj SHALL visas som nedåtriktade trianglar och utdelning som romber. Transaktionsmarkeringarna SHALL inte visas i det nedre översiktsdiagrammet/rangeslidern. Under diagrammet SHALL finnas en lista över registrerade transaktioner med datum, typ, aktie, antal, kurs/belopp per aktie, courtage/källskatt och total- eller nettobelopp. Listan SHALL uppdateras direkt när en transaktion har sparats.
 
 #### Scenario: Visa en registrerad transaktion
 
@@ -178,7 +217,7 @@ För aktier med registrerade köp SHALL den externa legenden visa uppskattad vin
 
 ### Requirement: Visa aktuell portföljställning bredvid transaktionslistan
 
-Under diagrammet SHALL en sammanställning med rubriken `Resultat` visas till höger om listan `Transaktioner`, med en rad per aktie som har registrerade transaktioner. Tabellen SHALL visa aktiens namn, datum för senast tillgängliga kurs, kvarvarande antal, senaste kurs, värde i aktiens valuta (senaste kurs multiplicerad med kvarvarande antal), värde i SEK, GAV (genomsnittligt anskaffningsvärde inklusive courtage), resultat i SEK och resultat i procent. Resultatet SHALL inkludera realiserad vinst/förlust från registrerade försäljningar och orealiserad vinst/förlust från kvarvarande aktier. GAV SHALL räknas med viktat genomsnittligt anskaffningsvärde, inklusive courtage. Utländska köp SHALL räknas om till SEK med valutakurs för transaktionsdagen eller närmast föregående tillgängliga valutadag; marknadsvärdet SHALL räknas om med senast tillgängliga valutakurs. Tabellen SHALL uppdateras efter en ny transaktion och efter uppdatering av marknadsdata, inklusive aktuella intradagskurser.
+Under diagrammet SHALL en sammanställning med rubriken `Resultat` visas till vänster om listan `Transaktioner`, med större horisontellt utrymme än transaktionslistan på breda skärmar så att resultat och radåtgärder ryms. Tabellen SHALL visa aktiens namn, kvarvarande antal, senaste kurs, värde i aktiens valuta (senaste kurs multiplicerad med kvarvarande antal), värde i SEK, GAV, resultat exklusive utdelningar, utdelningar, totalt resultat i SEK och resultat i procent. Datumkolumn SHALL inte visas i resultatlistan. Kursvärdet SHALL visas kursivt efter att en aktuell intradagskurs har hämtats för aktien under den aktuella appsessionen. Resultatet SHALL inkludera realiserad vinst/förlust från registrerade försäljningar och orealiserad vinst/förlust från kvarvarande aktier. Resultat exklusive utdelningar SHALL inte innehålla registrerade utdelningar eller källskatt; utdelningskolumnen SHALL visa nettoutdelning och källskatt i SEK. GAV SHALL räknas med viktat genomsnittligt anskaffningsvärde, inklusive courtage. Utländska köp SHALL räknas om till SEK med valutakurs för transaktionsdagen eller närmast föregående tillgängliga valutadag; marknadsvärdet SHALL räknas om med senast tillgängliga valutakurs. Tabellen SHALL uppdateras efter en ny transaktion och efter uppdatering av marknadsdata, inklusive aktuella intradagskurser. Varje rad SHALL ha en kompakt ikonknapp med uppdateringssymbol längst till höger som hämtar aktuell kurs enbart för den radens aktie och uppdaterar dess radresultat.
 
 Registrerade utdelningar SHALL räknas som kontant avkastning i SEK-resultatet, utan att ändra aktieantal eller GAV. Eventuell källskatt SHALL minska utdelningsresultatet.
 
@@ -186,7 +225,7 @@ Registrerade utdelningar SHALL räknas som kontant avkastning i SEK-resultatet, 
 
 - **WHEN** en aktie har en eller flera registrerade köp
 - **THEN** sammanställningen visar senaste stängningsdatum och kurs, kvarvarande antal, GAV samt resultat i kronor och procent
-- **AND** sammanställningen ligger till höger om transaktionslistan på breda skärmar
+- **AND** sammanställningen ligger till vänster om transaktionslistan på breda skärmar
 - **AND** resultatet räknar med courtage och växelkurs för utländska aktier
 
 #### Scenario: Ta med försäljningar i ställningen
@@ -199,7 +238,9 @@ Registrerade utdelningar SHALL räknas som kontant avkastning i SEK-resultatet, 
 
 `konvertera_aktiekop.py` SHALL läsa den förväntade UTF-16-kodade tabbseparerade transaktionsexporten från Downloads, mappa kolumnen `Värdepapper` till appens ticker och omvandla köp, försäljningar och utdelningar till appens CSV-format. ISIN SHALL inte användas som ticker. Berkshire-kursen i källan SHALL omvandlas till SEK med exportens växlingskurs. Utdelningens kontantbelopp SHALL importeras som utdelning utan att påverka antal eller anskaffningsvärde; källskatt SHALL registreras som negativ utdelning. Exportens transaktions-ID SHALL sparas för idempotent återimport. Äldre importer utan transaktions-ID SHALL dedupliceras med datum, typ, ticker, antal, kurs och courtage. Programmet SHALL som standard endast visa en förhandsgranskning och SHALL bara skriva till `aktiekop.csv` med explicit `--apply`.
 
-Diagrammets transaktionslista SHALL ha knappen `Importera aktiehändelser` och ett filval bredvid den. Om filvalet är tomt SHALL standardfilen `~/Downloads/transactions-and-notes-export.csv` användas; en vald UTF-16-export SHALL läsas direkt. Importen SHALL vara idempotent, spara nya rader och lägga till diagrammarkeringar och beräkningar i den öppna vyn utan omstart. Listans rubrik SHALL vara `Transaktioner`.
+Diagrammets transaktionslista SHALL ha knappen `Importera aktiehändelser` och ett filval bredvid den. Om filvalet är tomt SHALL standardfilen `~/Downloads/transactions-and-notes-export.csv` användas; en vald UTF-16-export SHALL läsas direkt. Importen SHALL vara idempotent, spara nya rader och lägga till diagrammarkeringar och beräkningar i den öppna vyn utan omstart. Listans rubrik SHALL vara `Transaktioner`. En knapp SHALL kunna dölja och visa utdelningsrader. Kolumnhuvudet `Aktie` SHALL växla mellan alfabetisk sortering A–Ö och listans ursprungliga sortering.
+
+När källrader hoppas över SHALL importsvaret innehålla originalraderna, kolumnrubrikerna och orsaken per rad. Gränssnittet SHALL visa en knapp med antalet omappade rader som öppnar dem i en popup med horisontell och vertikal rullning vid behov.
 
 #### Scenario: Förhandsgranska import
 
@@ -213,6 +254,12 @@ Diagrammets transaktionslista SHALL ha knappen `Importera aktiehändelser` och e
 - **THEN** nya transaktioner läggs till i `aktiekop.csv`
 - **AND** redan importerade dubbletter hoppas över
 - **AND** okända värdepapper eller ogiltiga rader rapporteras som varningar och hoppas över
+
+#### Scenario: Granska rader som inte kunde importeras
+
+- **WHEN** importen hoppar över källrader
+- **THEN** knappen för omappade rader visar antalet och öppnar en popup med originalraderna och orsaken
+- **AND** popupen kan rullas horisontellt och vertikalt när innehållet inte ryms
 
 ### Requirement: Lokal körning
 

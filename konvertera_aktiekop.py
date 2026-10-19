@@ -22,7 +22,7 @@ FIELDNAMES = ["date", "transaction_type", "ticker", "quantity", "price", "commis
 SECURITY_TO_TICKER = {
     "ABB": "ABB.ST", "Addtech": "ADDT-B.ST", "Alfa Laval": "ALFA.ST",
     "Assa Abloy": "ASSA-B.ST", "AstraZeneca": "AZN.ST", "Atlas Copco": "ATCO-B.ST",
-    "Boliden": "BOL.ST", "Epiroc": "EPI-B.ST", "EQT": "EQT.ST",
+    "Boliden": "BOL.ST", "Cibus Real Estate": "CIBUS.ST", "Epiroc": "EPI-B.ST", "EQT": "EQT.ST",
     "Ericsson": "ERIC-B.ST", "Essity": "ESSITY-B.ST", "Evolution": "EVO.ST",
     "H&M": "HM-B.ST", "Hexagon": "HEXA-B.ST", "Industrivärden": "INDU-C.ST",
     "Industrivärden C": "INDU-C.ST", "Industrivärden A": "INDU-A.ST",
@@ -75,25 +75,29 @@ def signature(row: dict[str, str]) -> tuple[str, ...]:
 
 def convert_source(
     source_file: Path = SOURCE_FILE, source_bytes: bytes | None = None,
-) -> tuple[list[dict[str, str]], list[str]]:
+) -> tuple[list[dict[str, str]], list[str], list[dict[str, object]], list[str]]:
     if source_bytes is None:
         source = source_file.open("r", encoding="utf-16", newline="")
     else:
         source = io.StringIO(source_bytes.decode("utf-16"), newline="")
     with source:
         reader = csv.reader(source, delimiter="\t")
-        next(reader, None)  # Duplicate Valuta headers are handled by fixed positions.
-        converted, warnings = [], []
+        headers = next(reader, [])  # Duplicate Valuta headers are handled by fixed positions.
+        converted, warnings, unmapped_rows = [], [], []
         for row_number, row in enumerate(reader, start=2):
             if not row or not any(cell.strip() for cell in row):
                 continue
             if len(row) < 28:
-                warnings.append(f"Rad {row_number}: för få kolumner; hoppas över.")
+                reason = "för få kolumner; hoppas över."
+                warnings.append(f"Rad {row_number}: {reason}")
+                unmapped_rows.append({"row_number": row_number, "reason": reason, "cells": row})
                 continue
             security = row[6].strip()
             ticker = SECURITY_TO_TICKER.get(security)
             if not ticker:
-                warnings.append(f"Rad {row_number}: okänt värdepapper {security!r}; hoppas över.")
+                reason = f"okänt värdepapper {security!r}; hoppas över."
+                warnings.append(f"Rad {row_number}: {reason}")
+                unmapped_rows.append({"row_number": row_number, "reason": reason, "cells": row})
                 continue
             source_type = row[5].strip().upper()
             is_dividend = "UTDELNING" in source_type or "KÄLLSKATT" in source_type
@@ -101,7 +105,9 @@ def convert_source(
             if is_dividend:
                 transaction_type = "UTDELNING"
             if not transaction_type:
-                warnings.append(f"Rad {row_number}: okänd transaktionstyp {row[5]!r}; hoppas över.")
+                reason = f"okänd transaktionstyp {row[5]!r}; hoppas över."
+                warnings.append(f"Rad {row_number}: {reason}")
+                unmapped_rows.append({"row_number": row_number, "reason": reason, "cells": row})
                 continue
             try:
                 trade_date = row[2].strip() or row[1].strip()  # Affärsdag, fallback Bokföringsdag.
@@ -144,8 +150,10 @@ def convert_source(
                 signature(entry)
                 converted.append(entry)
             except (InvalidOperation, ValueError, IndexError) as error:
-                warnings.append(f"Rad {row_number}: ogiltiga värden ({error}); hoppas över.")
-    return converted, warnings
+                reason = f"ogiltiga värden ({error}); hoppas över."
+                warnings.append(f"Rad {row_number}: {reason}")
+                unmapped_rows.append({"row_number": row_number, "reason": reason, "cells": row})
+    return converted, warnings, unmapped_rows, headers
 
 
 def write_rows(rows: list[dict[str, str]]) -> None:
@@ -165,7 +173,7 @@ def write_rows(rows: list[dict[str, str]]) -> None:
 def prepare_import(
     source_file: Path = SOURCE_FILE, source_bytes: bytes | None = None,
 ) -> dict[str, object]:
-    source_rows, warnings = convert_source(source_file, source_bytes)
+    source_rows, warnings, unmapped_rows, source_headers = convert_source(source_file, source_bytes)
     existing = read_existing()
     known_source_ids = {row.get("source_id", "") for row in existing if row.get("source_id")}
     legacy_signatures = Counter(signature(row) for row in existing if not row.get("source_id"))
@@ -199,6 +207,8 @@ def prepare_import(
         "new_rows": new_rows,
         "existing": existing,
         "warnings": warnings,
+        "unmapped_rows": unmapped_rows,
+        "source_headers": source_headers,
     }
 
 

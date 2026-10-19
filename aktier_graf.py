@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import subprocess
+from threading import Lock
 from zoneinfo import ZoneInfo
 import webbrowser
 
@@ -18,6 +19,7 @@ from konvertera_aktiekop import prepare_import, write_rows
 
 
 STOCK_LIST_FILE = Path(__file__).with_name("aktier.csv")
+VIEW_RANGE_FILE = Path(__file__).with_name("aktievy.json")
 PURCHASES_FILE = Path(__file__).with_name("aktiekop.csv")
 MAX_STOCKS = 50
 PLOT_COLORS = [
@@ -68,6 +70,30 @@ def load_stocks() -> list[dict[str, str | bool]]:
     if len(set(names)) != len(names):
         raise ValueError(f"Ett visningsnamn förekommer flera gånger i {STOCK_LIST_FILE}.")
     return stocks
+
+
+def load_visible_date_range(
+    available_start: pd.Timestamp,
+    available_end: pd.Timestamp,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Läs senast visat datumintervall och begränsa det till tillgänglig historik."""
+    available_start = pd.Timestamp(available_start).normalize()
+    available_end = pd.Timestamp(available_end).normalize()
+    default_start = max(INITIAL_VISIBLE_START, available_start)
+    default_end = available_end
+    try:
+        saved = json.loads(VIEW_RANGE_FILE.read_text(encoding="utf-8"))
+        start = pd.Timestamp(saved["start"]).normalize()
+        end = pd.Timestamp(saved["end"]).normalize()
+        if pd.isna(start) or pd.isna(end):
+            return default_start, default_end
+        start = max(start, available_start)
+        end = min(end, available_end)
+        if start >= end:
+            return default_start, default_end
+        return start, end
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return default_start, default_end
 
 
 def load_purchases() -> list[dict[str, str]]:
@@ -160,20 +186,20 @@ def quantity_in_current_shares(ticker: str, transaction_date: str, quantity: flo
 
 
 def app_version_suffix() -> str:
-    year = date.today().year
     repository = Path(__file__).resolve().parent
     try:
-        commit = subprocess.run(
-            ["git", "-C", str(repository), "rev-parse", "--short=7", "HEAD"],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-        count = subprocess.run(
-            ["git", "-C", str(repository), "rev-list", "--count", "HEAD"],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-        return f"v{year}.{int(count)} · {commit}"
-    except (OSError, subprocess.CalledProcessError, ValueError):
-        return f"v{year}.0 · no-git"
+        file_times = (
+            path.stat().st_mtime
+            for path in repository.rglob("*")
+            if path.is_file()
+            and ".git" not in path.relative_to(repository).parts
+            and "__pycache__" not in path.relative_to(repository).parts
+            and path.name not in {"aktier_graf.html", VIEW_RANGE_FILE.name}
+        )
+        latest_file_time = max(file_times)
+        return datetime.fromtimestamp(latest_file_time).strftime("%Y-%m-%d %H:%M")
+    except (OSError, ValueError):
+        return "filens tidsstämpel saknas"
 
 
 def make_purchase_panel(
@@ -186,18 +212,18 @@ def make_purchase_panel(
     )
     panel = r"""
 <section id="purchase-panel">
-  <h2>Registrera aktieköp</h2>
+  <h2>Registrera aktiehändelse</h2>
   <form id="purchase-form">
-    <label>Typ <select id="purchase-type" required><option value="KÖP">Köp</option><option value="SÄLJ">Sälj</option></select></label>
+    <label>Typ <select id="purchase-type" required><option value="KÖP">Köp</option><option value="SÄLJ">Sälj</option><option value="UTDELNING">Utdelning</option></select></label>
     <label>Aktie <select id="purchase-ticker" required>__OPTIONS__</select></label>
     <label>Datum <input id="purchase-date" type="date" required value="__TODAY__"></label>
-    <label>Antal <input id="purchase-quantity" type="text" inputmode="decimal" placeholder="0" required></label>
+    <label id="purchase-quantity-label">Antal <input id="purchase-quantity" type="text" inputmode="decimal" placeholder="0" required></label>
     <label id="purchase-price-label">Kurs (i aktiens valuta) <input id="purchase-price" type="text" inputmode="decimal" size="8" placeholder="189,34" required></label>
-    <label>Courtage <input id="purchase-commission" type="text" inputmode="decimal" placeholder="0,00" value="0,00" required></label>
-    <button type="submit">Lägg till köp</button>
+    <label id="purchase-fee-label">Courtage <input id="purchase-commission" type="text" inputmode="decimal" placeholder="0,00" value="0,00" required></label>
+    <button type="submit">Lägg till aktiehändelse</button>
     <p id="purchase-total" aria-live="polite">Totalbelopp: —</p>
   </form>
-  <p id="purchase-status" role="status">Köp sparas i aktiekop.csv och visas som stjärnor i diagrammet.</p>
+  <p id="purchase-status" role="status">Aktiehändelser sparas i aktiekop.csv och visas i diagrammet.</p>
 </section>
 <style>
   body { margin: 0; }
@@ -250,28 +276,54 @@ def make_purchase_panel(
   #purchase-list h2 { margin: 0; font-size: 19px; }
   .transaction-list-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
   #import-events-button { padding: 7px 11px; cursor: pointer; white-space: nowrap; }
+  #toggle-dividends-button { padding: 7px 11px; cursor: pointer; white-space: nowrap; }
+  #sort-purchases-by-stock { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-decoration: underline dotted; cursor: pointer; }
   #import-events-file { max-width: 280px; font: 14px sans-serif; }
+  #show-unmapped-button { margin-left: 8px; padding: 5px 9px; cursor: pointer; }
   #import-events-default { flex-basis: 100%; color: #576273; font-size: 12px; }
   #import-events-status { min-height: 1.2em; margin: 0 0 8px; color: #435064; }
+  #unmapped-rows-dialog { width: min(1200px, 94vw); max-width: 94vw; max-height: 88vh; box-sizing: border-box; padding: 18px; border: 1px solid #aab3c0; border-radius: 8px; }
+  #unmapped-rows-dialog::backdrop { background: rgb(18 27 41 / 45%); }
+  #unmapped-rows-dialog h2 { margin: 0 0 12px; }
+  #unmapped-rows-content { max-width: 100%; max-height: 70vh; overflow: auto; border: 1px solid #d4dae2; }
+  #unmapped-rows-content table { width: max-content; max-width: none; border-collapse: collapse; text-align: left; font: 13px sans-serif; }
+  #unmapped-rows-content th, #unmapped-rows-content td { max-width: 360px; padding: 6px 8px; border-bottom: 1px solid #e1e5eb; white-space: nowrap; }
+  #unmapped-rows-content td { overflow: hidden; text-overflow: ellipsis; }
+  #unmapped-rows-content th { position: sticky; top: 0; z-index: 1; background: #f3f5f8; }
+  .unmapped-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
   #purchase-list table { width: max-content; max-width: 100%; border-collapse: collapse; text-align: left; }
   #purchase-list th, #purchase-list td { padding: 7px 9px; border-bottom: 1px solid #e1e5eb; white-space: nowrap; }
   #purchase-list th { background: #f3f5f8; }
   #purchase-list td.number { text-align: right; font-variant-numeric: tabular-nums; }
   #purchase-list-content { width: max-content; max-width: 100%; max-height: 320px; overflow: auto; }
   #purchase-list-content thead th { position: sticky; top: 0; z-index: 1; }
-  #transaction-tables { display: flex; align-items: flex-start; gap: 20px; width: calc(100% - 92px); margin: 12px 0 28px 92px; box-sizing: border-box; }
-  #transaction-tables > section { flex: 1 1 50%; min-width: 0; max-width: 50%; margin: 0; padding: 0; border: 0; font: 15px sans-serif; }
-  #transaction-tables #purchase-list { width: auto; max-width: 50%; margin: 0; }
+  #transaction-tables { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: start; column-gap: 8px; row-gap: 0; width: calc(100% - 92px); margin: 12px 0 28px 92px; box-sizing: border-box; }
+  #transaction-tables > section { display: contents; font: 15px sans-serif; }
+  #transaction-tables .transaction-panel-controls { min-width: 0; min-height: 112px; box-sizing: border-box; padding: 0 0 10px; }
+  #transaction-list-controls { grid-column: 2; grid-row: 2; }
+  #portfolio-summary-controls { grid-column: 1; grid-row: 2; display: flex; align-items: flex-start; flex-wrap: wrap; gap: 14px; }
+  #purchase-list-content { grid-column: 2; grid-row: 3; }
+  #portfolio-summary-content { grid-column: 1; grid-row: 3; }
+  #purchase-list > h2 { grid-column: 2; grid-row: 1; }
+  #portfolio-summary > h2 { grid-column: 1; grid-row: 1; }
+  #portfolio-summary-controls label { display: inline-flex; align-items: center; gap: 7px; }
   #transaction-tables h2 { margin: 0 0 12px; font-size: 19px; }
   #transaction-tables table { width: max-content; max-width: 100%; border-collapse: collapse; text-align: left; }
   #transaction-tables th, #transaction-tables td { padding: 7px 9px; border-bottom: 1px solid #e1e5eb; white-space: nowrap; }
   #transaction-tables th { background: #f3f5f8; }
   #transaction-tables td.number { text-align: right; font-variant-numeric: tabular-nums; }
   .transaction-table-content { max-width: 100%; overflow-x: auto; }
-  @media (max-width: 900px) { #stock-chart-viewport { flex-direction: column; } #stock-chart-viewport > .plotly-graph-div { flex: none; width: 100% !important; height: 70vh !important; min-height: 520px; } #stock-custom-legend { flex: 0 1 auto; width: 100%; max-height: 280px; padding: 8px; border: 1px solid #e1e5eb; } #top-controls-row { width: calc(100% - 92px); margin-left: 92px; justify-content: flex-start; } #top-controls-row #purchase-panel { max-width: 100%; margin-right: auto; } #purchase-list { max-width: calc(100% - 92px); } #refresh-controls { margin-left: clamp(12px, 3vw, 24px); } #purchase-panel, #purchase-list { margin-left: 92px; } #transaction-tables { flex-direction: column; width: calc(100% - 92px); margin-left: 92px; } #transaction-tables > section { max-width: 100%; width: 100%; } #purchase-form { grid-template-columns: repeat(2, max-content); } #purchase-form button { grid-column: 1 / -1; justify-self: start; } #purchase-total { grid-column: 1 / -1; justify-self: start; margin: 0; } }
+  #portfolio-summary-content table { width: 100%; table-layout: fixed; }
+  #portfolio-summary-content td.current-price-updated { font-style: italic; }
+  #portfolio-summary-content th, #portfolio-summary-content td { padding: 5px 6px; white-space: normal; overflow-wrap: anywhere; }
+  #portfolio-summary-content th:last-child, #portfolio-summary-content td:last-child { width: 34px; padding: 3px; text-align: center; }
+  .portfolio-row-update { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 3px; }
+  .portfolio-row-update svg { display: block; width: 18px; height: 18px; }
+  @media (max-width: 900px) { #stock-chart-viewport { flex-direction: column; } #stock-chart-viewport > .plotly-graph-div { flex: none; width: 100% !important; height: 70vh !important; min-height: 520px; } #stock-custom-legend { flex: 0 1 auto; width: 100%; max-height: 280px; padding: 8px; border: 1px solid #e1e5eb; } #top-controls-row { width: calc(100% - 92px); margin-left: 92px; justify-content: flex-start; } #top-controls-row #purchase-panel { max-width: 100%; margin-right: auto; } #purchase-list { max-width: calc(100% - 92px); } #refresh-controls { margin-left: clamp(12px, 3vw, 24px); } #purchase-panel, #purchase-list { margin-left: 92px; } #transaction-tables { grid-template-columns: minmax(0, 1fr); width: calc(100% - 92px); margin-left: 92px; row-gap: 0; } #purchase-list > h2 { grid-column: 1; grid-row: 1; } #transaction-list-controls { grid-column: 1; grid-row: 2; } #purchase-list-content { grid-column: 1; grid-row: 3; } #portfolio-summary > h2 { grid-column: 1; grid-row: 4; } #transaction-tables #portfolio-summary-controls { grid-column: 1; grid-row: 5; } #transaction-tables #portfolio-summary-content { grid-column: 1; grid-row: 6; } #purchase-form { grid-template-columns: repeat(2, max-content); } #purchase-form button { grid-column: 1 / -1; justify-self: start; } #purchase-total { grid-column: 1 / -1; justify-self: start; margin: 0; } }
 </style>
 <script>
 const purchaseGraph = document.querySelector('.plotly-graph-div');
+window.currentPriceTickers = new Set();
 const purchasePanel = document.getElementById('purchase-panel');
 const chartLayout = document.createElement('div');
 chartLayout.id = 'stock-chart-layout';
@@ -332,10 +384,10 @@ topControlsRow.id = 'top-controls-row';
 topControlsRow.append(purchasePanel, refreshControls);
 const purchaseList = document.createElement('section');
 purchaseList.id = 'purchase-list';
-purchaseList.innerHTML = '<div class="transaction-list-heading"><h2>Transaktioner</h2><button id="import-events-button" type="button">Importera aktiehändelser</button><input id="import-events-file" type="file" accept=".csv,text/csv" aria-label="Välj CSV-fil med aktiehändelser"><span id="import-events-default">Standard: ~/Downloads/transactions-and-notes-export.csv</span></div><p id="import-events-status" role="status"></p><div id="purchase-list-content"></div>';
+purchaseList.innerHTML = '<h2>Transaktioner</h2><div id="transaction-list-controls" class="transaction-panel-controls"><div class="transaction-list-heading"><button id="import-events-button" type="button">Importera aktiehändelser</button><input id="import-events-file" type="file" accept=".csv,text/csv" aria-label="Välj CSV-fil med aktiehändelser"><button id="toggle-dividends-button" type="button">Dölj utdelningar</button><span id="import-events-default">Standard: ~/Downloads/transactions-and-notes-export.csv</span></div><p id="import-events-status" role="status"></p><button id="show-unmapped-button" type="button" hidden></button><dialog id="unmapped-rows-dialog"><div class="unmapped-dialog-heading"><h2>Omappade källrader</h2><button id="close-unmapped-dialog" type="button">Stäng</button></div><div id="unmapped-rows-content"></div></dialog></div><div id="purchase-list-content"></div>';
 const portfolioSummary = document.createElement('section');
 portfolioSummary.id = 'portfolio-summary';
-portfolioSummary.innerHTML = '<h2>Resultat</h2><div id="portfolio-summary-content" class="transaction-table-content"></div>';
+portfolioSummary.innerHTML = '<h2>Resultat</h2><div id="portfolio-summary-controls" class="transaction-panel-controls"><label><input id="filter-solo-lists" type="checkbox" checked> Filtrera aktier enligt solo-val</label><label><input id="filter-chart-lists" type="checkbox"> Filtrera enligt diagramval</label></div><div id="portfolio-summary-content" class="transaction-table-content"></div>';
 const transactionTables = document.createElement('div');
 transactionTables.id = 'transaction-tables';
 transactionTables.append(purchaseList, portfolioSummary);
@@ -371,10 +423,38 @@ function toIsoDate(value) {
   const parsed = new Date(value);
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : '';
 }
+function stockholmToday() {
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Europe/Stockholm', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
 const initialAxisRange = purchaseGraph.layout.xaxis.range;
 const sliderDataRange = purchaseGraph.layout.xaxis.rangeslider.range;
 const allowedStartDate = toIsoDate(sliderDataRange[0]);
 let allowedEndDate = toIsoDate(initialAxisRange[1]);
+let viewRangeSaveTimer = null;
+window.persistVisibleDateRange = function(range) {
+  if (!Array.isArray(range) || range.length < 2) return;
+  const start = toIsoDate(range[0]);
+  const end = toIsoDate(range[1]);
+  if (!isIsoDate(start) || !isIsoDate(end) || start >= end) return;
+  clearTimeout(viewRangeSaveTimer);
+  viewRangeSaveTimer = setTimeout(async () => {
+    try {
+      const response = await fetch('/api/view-range', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({start, end}),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Datumintervallet kunde inte sparas.');
+    } catch (error) {
+      visibleDateStatus.textContent = `Datumintervallet kunde inte sparas: ${error.message}`;
+    }
+  }, 250);
+};
 function isIsoDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -418,8 +498,9 @@ window.updatePurchaseTotal = function() {
   const currency = ticker.endsWith('.ST') || ticker === 'BRK-B' ? 'kr'
     : (['NDAQ', 'SIRI', 'RIVN'].includes(ticker) ? 'USD' : (ticker === 'RHM.DE' ? 'EUR' : ''));
   const total = quantity * price + commission;
-  const label = type === 'SÄLJ' ? 'Nettobelopp' : 'Totalbelopp';
-  const amount = type === 'SÄLJ' ? quantity * price - commission : total;
+  const dividend = type === 'UTDELNING';
+  const label = dividend ? 'Utdelning efter källskatt' : type === 'SÄLJ' ? 'Nettobelopp' : 'Totalbelopp';
+  const amount = type === 'SÄLJ' || dividend ? quantity * price - commission : total;
   purchaseTotal.textContent = `${label}: ${amount.toLocaleString('sv-SE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}${currency ? ` ${currency}` : ''}`;
 };
 ['purchase-quantity', 'purchase-price', 'purchase-commission'].forEach(id =>
@@ -435,6 +516,7 @@ document.getElementById('purchase-commission').addEventListener('change', event 
   }
 });
 window.updateSuggestedCommission = function() {
+  if (document.getElementById('purchase-type').value === 'UTDELNING') return;
   const quantity = parsePurchaseNumber(document.getElementById('purchase-quantity').value);
   const price = parsePurchaseNumber(document.getElementById('purchase-price').value);
   if (!(quantity > 0) || !(price > 0)) return;
@@ -463,10 +545,35 @@ document.getElementById('purchase-ticker').addEventListener('change', () => {
   if (window.suggestPurchasePrice) window.suggestPurchasePrice();
   window.updatePurchaseTotal();
 });
-document.getElementById('purchase-type').addEventListener('change', window.updatePurchaseTotal);
+let previousPurchaseType = 'KÖP';
+document.getElementById('purchase-type').addEventListener('change', event => {
+  const type = event.target.value;
+  const dividend = type === 'UTDELNING';
+  const quantityLabel = document.getElementById('purchase-quantity-label');
+  const quantityField = document.getElementById('purchase-quantity');
+  quantityLabel.hidden = false;
+  quantityLabel.firstChild.textContent = dividend ? 'Antal aktier ' : 'Antal ';
+  quantityField.required = true;
+  document.getElementById('purchase-price-label').firstChild.textContent = dividend ? 'Utdelning per aktie (i aktiens valuta) ' : 'Kurs (i aktiens valuta) ';
+  document.getElementById('purchase-fee-label').firstChild.textContent = dividend ? 'Källskatt ' : 'Courtage ';
+  if (dividend) {
+    document.getElementById('purchase-price').value = '';
+    document.getElementById('purchase-commission').value = '0,00';
+  } else if (previousPurchaseType === 'UTDELNING') {
+    quantityField.value = '';
+    document.getElementById('purchase-price').value = '';
+    document.getElementById('purchase-commission').value = '0,00';
+    if (window.suggestPurchasePrice) window.suggestPurchasePrice();
+    if (window.updateSuggestedCommission) window.updateSuggestedCommission();
+  }
+  previousPurchaseType = type;
+  window.updatePurchaseTotal();
+});
 document.getElementById('purchase-date').addEventListener('change', () => {
   if (window.suggestPurchasePrice) window.suggestPurchasePrice();
 });
+let hideDividendTransactions = false;
+let purchaseListAlphabetical = false;
 window.renderPurchaseList = function() {
   const container = document.getElementById('purchase-list-content');
   if (!container || !purchaseGraph.data) return;
@@ -483,35 +590,56 @@ window.renderPurchaseList = function() {
       const quantity = Number(String(details[2]).replace(/\s/g, '').replace(',', '.'));
       const price = Number(String(details[1]).replace(/\s/g, '').replace(',', '.'));
       const commission = Number(String(details[5] || '0').replace(/\s/g, '').replace(',', '.')) || 0;
-      const total = type === 'SÄLJ' ? quantity * price - commission : quantity * price + commission;
+      const total = type === 'SÄLJ' || type === 'UTDELNING' ? quantity * price - commission : quantity * price + commission;
       const rawCurrency = details[4] || '';
       const currency = rawCurrency === 'SEK' ? 'kr' : rawCurrency;
       const formatted = value => Number.isFinite(value)
         ? value.toLocaleString('sv-SE', {minimumFractionDigits: 2, maximumFractionDigits: 2})
         : String(value ?? '');
       rows.push({
+        ticker: trace.meta.ticker,
         date: String(date).slice(0, 10),
         type,
         name: stocksByTicker[trace.meta.ticker] || trace.meta.ticker,
-        quantity: type === 'UTDELNING' ? '—' : String(details[2]),
+        quantity: String(details[2]),
         price: `${formatted(price)}${currency ? ` ${currency}` : ''}`,
         commission: `${formatted(commission)}${currency ? ` ${currency}` : ''}`,
         total: `${total.toLocaleString('sv-SE', {minimumFractionDigits: 2, maximumFractionDigits: 2})}${currency ? ` ${currency}` : ''}`,
       });
     });
   });
-  rows.sort((a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name, 'sv'));
+  const soloFilter = document.getElementById('filter-solo-lists');
+  const soloTicker = soloFilter && soloFilter.checked && window.getSoloTicker ? window.getSoloTicker() : null;
+  const chartFilter = document.getElementById('filter-chart-lists');
+  const chartTickers = chartFilter && chartFilter.checked && window.getVisibleTickers
+    ? new Set(window.getVisibleTickers()) : null;
+  const visibleRows = rows.filter(row =>
+    (!hideDividendTransactions || row.type !== 'UTDELNING') &&
+    (!soloTicker || row.ticker === soloTicker) &&
+    (!chartTickers || chartTickers.has(row.ticker))
+  );
+  visibleRows.sort(purchaseListAlphabetical
+    ? (a, b) => a.name.localeCompare(b.name, 'sv') || b.date.localeCompare(a.date)
+    : (a, b) => b.date.localeCompare(a.date) || a.name.localeCompare(b.name, 'sv'));
   container.replaceChildren();
-  if (!rows.length) {
+  if (!visibleRows.length) {
     const empty = document.createElement('p');
-    empty.textContent = 'Inga köp är registrerade ännu.';
+    if (chartTickers && !chartTickers.size) empty.textContent = 'Inga aktier visas i diagrammet.';
+    else if (soloTicker) empty.textContent = 'Inga transaktioner för den solo-valda aktien.';
+    else if (hideDividendTransactions && rows.length) empty.textContent = 'Inga köp eller försäljningar visas när utdelningar är dolda.';
+    else empty.textContent = 'Inga köp är registrerade ännu.';
     container.append(empty);
     return;
   }
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Datum</th><th>Typ</th><th>Aktie</th><th>Antal</th><th>Kurs/belopp</th><th>Courtage</th><th>Totalbelopp</th></tr></thead>';
+  table.innerHTML = `<thead><tr><th>Datum</th><th>Typ</th><th aria-sort="${purchaseListAlphabetical ? 'ascending' : 'none'}"><button id="sort-purchases-by-stock" type="button" aria-label="Sortera transaktioner på aktie">Aktie${purchaseListAlphabetical ? ' A–Z' : ''}</button></th><th>Antal</th><th>Kurs/belopp</th><th>Courtage/källskatt</th><th>Total/nettobelopp</th></tr></thead>`;
+  const sortStockButton = table.querySelector('#sort-purchases-by-stock');
+  sortStockButton.addEventListener('click', () => {
+    purchaseListAlphabetical = !purchaseListAlphabetical;
+    window.renderPurchaseList();
+  });
   const body = document.createElement('tbody');
-  rows.forEach(row => {
+  visibleRows.forEach(row => {
     const tr = document.createElement('tr');
     [row.date, row.type, row.name, row.quantity, row.price, row.commission, row.total].forEach((value, index) => {
       const td = document.createElement('td');
@@ -547,7 +675,8 @@ window.renderPortfolioSummary = function() {
     const currency = currencyFor(ticker);
     const events = trace.x.map((date, index) => ({date: String(date).slice(0, 10), details: trace.customdata[index]}))
       .sort((a, b) => a.date.localeCompare(b.date));
-    let held = 0, localBasis = 0, sekBasis = 0, totalBuyCostSek = 0, realizedSek = 0, fxMissing = false;
+    let held = 0, localBasis = 0, sekBasis = 0, totalBuyCostSek = 0, realizedSek = 0;
+    let dividendSek = 0, fxMissing = false, dividendFxMissing = false;
     events.forEach(({date, details}) => {
       const price = number(details[1]), enteredQuantity = number(details[2]);
       const quantity = ticker === 'SIRI' && date < '2024-09-10' ? enteredQuantity / 10 : enteredQuantity;
@@ -555,12 +684,13 @@ window.renderPortfolioSummary = function() {
       const fx = Number(details[7]);
       const transactionType = details[6] || 'KÖP';
       if (!(enteredQuantity > 0) || (transactionType === 'UTDELNING' ? price === 0 : price <= 0)) return;
-      if (!Number.isFinite(fx) || fx <= 0) fxMissing = true;
       const rate = Number.isFinite(fx) && fx > 0 ? fx : (currency === 'kr' ? 1 : null);
       if (transactionType === 'UTDELNING') {
-        if (rate !== null) realizedSek += (price * enteredQuantity - commission) * rate;
+        if (rate !== null) dividendSek += (price * enteredQuantity - commission) * rate;
+        else dividendFxMissing = true;
       } else if ((details[6] || 'KÖP') === 'SÄLJ') {
         if (rate !== null) realizedSek += (price * enteredQuantity - commission) * rate;
+        else fxMissing = true;
         const removed = Math.min(quantity, held);
         if (held > 0 && removed > 0) {
           const fraction = removed / held;
@@ -582,9 +712,12 @@ window.renderPortfolioSummary = function() {
     const latestPrice = Number(latestData[0]);
     const currentFx = Number(latestData[3]);
     const validFx = Number.isFinite(currentFx) && currentFx > 0;
-    const profitSek = validFx && !fxMissing ? realizedSek + latestPrice * currentFx * held - sekBasis : null;
+    const profitExDividendSek = validFx && !fxMissing ? realizedSek + latestPrice * currentFx * held - sekBasis : null;
+    const profitSek = profitExDividendSek !== null && !dividendFxMissing ? profitExDividendSek + dividendSek : null;
     const profitPercent = profitSek !== null && totalBuyCostSek > 0 ? profitSek / totalBuyCostSek * 100 : null;
+    const formatKr = value => value === null ? '—' : `${value > 0 ? '+' : ''}${money(value)} kr`;
     rows.push({
+      ticker,
       name: stock.meta.displayName || ticker,
       date: String(stock.x[latestIndex]).slice(0, 10),
       quantity: amount(held),
@@ -592,34 +725,116 @@ window.renderPortfolioSummary = function() {
       value: `${money(latestPrice * held)}${currency ? ` ${currency}` : ''}`,
       valueSek: validFx ? `${money(latestPrice * currentFx * held)} kr` : '—',
       gav: `${held > 0 ? money(localBasis / held) : '—'}${held > 0 && currency ? ` ${currency}` : ''}`,
-      profit: profitSek === null ? '—' : `${profitSek > 0 ? '+' : ''}${money(profitSek)} kr`,
+      profitExDividend: formatKr(profitExDividendSek),
+      dividend: formatKr(dividendFxMissing ? null : dividendSek),
+      profit: formatKr(profitSek),
       percent: profitPercent === null ? '—' : `${profitPercent > 0 ? '+' : ''}${money(profitPercent)}%`,
     });
   });
-  rows.sort((a, b) => a.name.localeCompare(b.name, 'sv'));
+  const soloFilter = document.getElementById('filter-solo-lists');
+  const soloTicker = soloFilter && soloFilter.checked && window.getSoloTicker ? window.getSoloTicker() : null;
+  const chartFilter = document.getElementById('filter-chart-lists');
+  const chartTickers = chartFilter && chartFilter.checked && window.getVisibleTickers
+    ? new Set(window.getVisibleTickers()) : null;
+  const visibleRows = rows.filter(row =>
+    (!soloTicker || row.ticker === soloTicker) &&
+    (!chartTickers || chartTickers.has(row.ticker))
+  );
+  visibleRows.sort((a, b) => a.name.localeCompare(b.name, 'sv'));
   container.replaceChildren();
-  if (!rows.length) {
+  if (!visibleRows.length) {
     const empty = document.createElement('p');
-    empty.textContent = 'Inga aktier med registrerade transaktioner.';
+    if (chartTickers && !chartTickers.size) empty.textContent = 'Inga aktier visas i diagrammet.';
+    else if (soloTicker) empty.textContent = 'Inga resultat för den solo-valda aktien.';
+    else empty.textContent = 'Inga aktier med registrerade transaktioner.';
     container.append(empty);
     return;
   }
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Aktie</th><th>Datum</th><th>Antal</th><th>Senaste kurs</th><th>GAV (genomsnittligt anskaffningsvärde)</th><th>Resultat (kr)</th><th>Resultat (%)</th><th>Värde</th><th>Värde SEK</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Aktie</th><th>Antal</th><th>Senaste kurs</th><th>GAV</th><th>Resultat exkl utd</th><th>Utdelning</th><th>Resultat (kr)</th><th>Resultat (%)</th><th>Värde</th><th>Värde SEK</th><th></th></tr></thead>';
   const body = document.createElement('tbody');
-  rows.forEach(row => {
+  visibleRows.forEach(row => {
     const tr = document.createElement('tr');
-    [row.name, row.date, row.quantity, row.price, row.gav, row.profit, row.percent, row.value, row.valueSek].forEach((value, index) => {
+    [row.name, row.quantity, row.price, row.gav, row.profitExDividend, row.dividend, row.profit, row.percent, row.value, row.valueSek].forEach((value, index) => {
       const td = document.createElement('td');
       td.textContent = value;
       if (index > 1) td.className = 'number';
+      if (index === 2 && window.currentPriceTickers.has(row.ticker)) td.classList.add('current-price-updated');
       tr.append(td);
     });
+    const actionCell = document.createElement('td');
+    const updateButton = document.createElement('button');
+    updateButton.type = 'button';
+    updateButton.className = 'portfolio-row-update';
+    updateButton.setAttribute('aria-label', `Uppdatera kurs och resultat för ${row.name}`);
+    updateButton.title = `Uppdatera kurs och resultat för ${row.name}`;
+    updateButton.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M19 12a7 7 0 0 0-12.8-3L4 12"/><path d="M4 17v-5h5"/><path d="M5 12a7 7 0 0 0 12.8 3L20 12"/></svg>';
+    updateButton.addEventListener('click', () => window.updatePortfolioRow(row.ticker, updateButton));
+    actionCell.append(updateButton);
+    tr.append(actionCell);
     body.append(tr);
   });
   table.append(body);
   container.append(table);
   window.syncTransactionListHeight();
+};
+window.updatePortfolioRow = async function(ticker, button) {
+  const originalMarkup = button.innerHTML;
+  button.disabled = true;
+  button.textContent = 'Hämtar…';
+  try {
+    const response = await fetch('/api/current-prices', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ticker}),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Kursen kunde inte hämtas.');
+    const update = result.updates && result.updates[ticker];
+    const traceIndex = window.stockGraphState.stockTraceByTicker[ticker];
+    if (!update || traceIndex === undefined) throw new Error((result.warnings || []).join(' ') || 'Ingen aktuell kurs hittades.');
+    const trace = purchaseGraph.data[traceIndex];
+    const x = Array.from(trace.x), y = Array.from(trace.y), customdata = Array.from(trace.customdata);
+    const date = String(update.date).slice(0, 10), lastDate = String(x[x.length - 1]).slice(0, 10);
+    const base = Number(window.stockGraphState.visibleBases[traceIndex]) || Number(customdata[0][0]);
+    const point = [Number(update.price), update.customdata[1], 1.0, update.customdata[3]];
+    if (date >= lastDate) {
+      if (date === lastDate) {
+        y[y.length - 1] = Number(update.price) / base * 100;
+        customdata[customdata.length - 1] = point;
+      } else {
+        x.push(date); y.push(Number(update.price) / base * 100); customdata.push(point);
+      }
+      await Plotly.restyle(purchaseGraph, {x: [x], y: [y], customdata: [customdata]}, [traceIndex]);
+    } else {
+      const pointIndex = x.findIndex(value => String(value).slice(0, 10) === date);
+      if (pointIndex < 0) throw new Error('Kursen är äldre än diagrammets data.');
+      y[pointIndex] = Number(update.price) / base * 100;
+      customdata[pointIndex] = point;
+      await Plotly.restyle(purchaseGraph, {y: [y], customdata: [customdata]}, [traceIndex]);
+    }
+    const axisRange = purchaseGraph._fullLayout.xaxis.range.map(toIsoDate);
+    const rangeEnd = [axisRange[1], stockholmToday()].sort().at(-1);
+    allowedEndDate = rangeEnd > allowedEndDate ? rangeEnd : allowedEndDate;
+    if (rangeEnd !== axisRange[1]) {
+      await Plotly.relayout(purchaseGraph, {
+        'xaxis.range': [axisRange[0], rangeEnd],
+        'xaxis.rangeslider.range': [allowedStartDate, rangeEnd],
+      });
+    }
+    window.rebaseVisibleStockGraph({});
+    if (window.syncVisibleDateInputs) window.syncVisibleDateInputs();
+    window.currentPriceTickers.add(ticker);
+    window.renderPortfolioSummary();
+    window.refreshProfitLabel(ticker);
+    button.title = `Kurs och resultat för ${ticker} uppdaterade`;
+  } catch (error) {
+    button.title = error.message;
+  } finally {
+    setTimeout(() => {
+      if (button.isConnected) { button.innerHTML = originalMarkup; button.disabled = false; }
+    }, 1800);
+  }
 };
 window.syncTransactionListHeight = function() {
   const list = document.getElementById('purchase-list-content');
@@ -631,11 +846,62 @@ window.syncTransactionListHeight = function() {
 window.addEventListener('resize', () => requestAnimationFrame(window.syncTransactionListHeight));
 window.renderPurchaseList();
 window.renderPortfolioSummary();
+document.getElementById('filter-solo-lists').addEventListener('change', () => {
+  window.renderPurchaseList();
+  window.renderPortfolioSummary();
+});
+document.getElementById('filter-chart-lists').addEventListener('change', () => {
+  window.renderPurchaseList();
+  window.renderPortfolioSummary();
+});
 const importEventsButton = document.getElementById('import-events-button');
 const importEventsFile = document.getElementById('import-events-file');
 const importEventsStatus = document.getElementById('import-events-status');
+const toggleDividendsButton = document.getElementById('toggle-dividends-button');
+toggleDividendsButton.addEventListener('click', () => {
+  hideDividendTransactions = !hideDividendTransactions;
+  toggleDividendsButton.textContent = hideDividendTransactions ? 'Visa utdelningar' : 'Dölj utdelningar';
+  window.renderPurchaseList();
+});
+const showUnmappedButton = document.getElementById('show-unmapped-button');
+const unmappedRowsDialog = document.getElementById('unmapped-rows-dialog');
+const unmappedRowsContent = document.getElementById('unmapped-rows-content');
+document.getElementById('close-unmapped-dialog').addEventListener('click', () => unmappedRowsDialog.close());
+showUnmappedButton.addEventListener('click', () => unmappedRowsDialog.showModal());
+function showUnmappedRows(headers, rows) {
+  unmappedRowsContent.replaceChildren();
+  if (!rows.length) {
+    showUnmappedButton.hidden = true;
+    return;
+  }
+  const table = document.createElement('table');
+  const allHeaders = ['Källrad', 'Orsak', ...headers];
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  allHeaders.forEach(label => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headerRow.append(th);
+  });
+  thead.append(headerRow);
+  const tbody = document.createElement('tbody');
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    [row.row_number, row.reason, ...(row.cells || [])].forEach(value => {
+      const td = document.createElement('td');
+      td.textContent = String(value ?? '');
+      tr.append(td);
+    });
+    tbody.append(tr);
+  });
+  table.append(thead, tbody);
+  unmappedRowsContent.append(table);
+  showUnmappedButton.textContent = `Visa ${rows.length} omappade rader`;
+  showUnmappedButton.hidden = false;
+}
 importEventsButton.addEventListener('click', async () => {
   importEventsButton.disabled = true;
+  showUnmappedButton.hidden = true;
   importEventsStatus.textContent = 'Importerar aktiehändelser…';
   try {
     const selectedFile = importEventsFile.files && importEventsFile.files[0];
@@ -647,6 +913,7 @@ importEventsButton.addEventListener('click', async () => {
     const response = await fetch('/api/import-events', request);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Importen misslyckades.');
+    showUnmappedRows(result.source_headers || [], result.unmapped_rows || []);
     const grouped = new Map();
     (result.markers || []).forEach(marker => {
       const stockIndex = window.stockGraphState.stockTraceByTicker[marker.ticker];
@@ -723,7 +990,7 @@ currentPriceButton.addEventListener('click', async () => {
         x: [update.x], y: [update.y], customdata: [update.customdata],
       }, [update.traceIndex])));
       const axisRange = purchaseGraph._fullLayout.xaxis.range.map(toIsoDate);
-      const rangeEnd = latestDate > axisRange[1] ? latestDate : axisRange[1];
+      const rangeEnd = [latestDate, axisRange[1], stockholmToday()].sort().at(-1);
       allowedEndDate = rangeEnd > allowedEndDate ? rangeEnd : allowedEndDate;
       if (rangeEnd !== axisRange[1]) {
         const firstDate = purchaseGraph.data
@@ -734,6 +1001,7 @@ currentPriceButton.addEventListener('click', async () => {
           'xaxis.rangeslider.range': [firstDate, rangeEnd],
         });
       }
+      updates.forEach(update => window.currentPriceTickers.add(update.ticker));
       updates.forEach(update => window.refreshProfitLabel(update.ticker, false));
       window.renderCustomLegend();
       window.renderPortfolioSummary();
@@ -814,7 +1082,7 @@ purchaseForm.addEventListener('submit', async event => {
     price: document.getElementById('purchase-price').value.trim(),
     commission: document.getElementById('purchase-commission').value.trim(),
   };
-  purchaseStatus.textContent = 'Sparar köp…';
+  purchaseStatus.textContent = 'Sparar aktiehändelse…';
   try {
     const response = await fetch('/api/purchases', {
       method: 'POST',
@@ -822,7 +1090,7 @@ purchaseForm.addEventListener('submit', async event => {
       body: JSON.stringify(purchase),
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Köpet kunde inte sparas.');
+    if (!response.ok) throw new Error(result.error || 'Aktiehändelsen kunde inte sparas.');
     const markerIndex = purchaseGraph.data.findIndex(trace =>
       trace.meta && trace.meta.role === 'purchase' && trace.meta.ticker === result.ticker
     );
@@ -835,16 +1103,18 @@ purchaseForm.addEventListener('submit', async event => {
     await Plotly.extendTraces(purchaseGraph, {
       x: [[result.date]],
       y: [[result.chart_price / base * 100]],
-      customdata: [[[result.chart_price, result.price, result.quantity, result.ticker, result.currency, result.commission, result.transaction_type, result.sek_fx_rate]]],
-      'marker.symbol': [[result.transaction_type === 'KÖP' ? 'circle' : 'triangle-down']],
+      customdata: [[[result.chart_price, result.price, result.quantity, result.ticker, result.currency, result.commission, result.transaction_type, result.sek_fx_rate, result.ticker_fx_rate]]],
+      'marker.symbol': [[result.transaction_type === 'UTDELNING' ? 'diamond' : (result.transaction_type === 'KÖP' ? 'circle' : 'triangle-down')]],
     }, [markerIndex]);
     if (window.refreshProfitLabel) window.refreshProfitLabel(result.ticker);
     window.renderPurchaseList();
     window.renderPortfolioSummary();
-    purchaseStatus.textContent = `${result.name}: ${result.transaction_type.toLowerCase()} ${result.quantity} st ${result.date} för ${result.price} ${result.currency} + ${result.commission} ${result.currency} courtage. Sparat i aktiekop.csv.`;
+    purchaseStatus.textContent = result.transaction_type === 'UTDELNING'
+      ? `${result.name}: utdelning ${result.date}, ${result.quantity} st à ${result.price} ${result.currency}, minus ${result.commission} ${result.currency} källskatt. Sparad i aktiekop.csv.`
+      : `${result.name}: ${result.transaction_type.toLowerCase()} ${result.quantity} st ${result.date} för ${result.price} ${result.currency} + ${result.commission} ${result.currency} courtage. Sparat i aktiekop.csv.`;
     document.getElementById('purchase-quantity').value = '';
     document.getElementById('purchase-price').value = '';
-    document.getElementById('purchase-commission').value = '0';
+    document.getElementById('purchase-commission').value = '0,00';
     window.updatePurchaseTotal();
   } catch (error) {
     purchaseStatus.textContent = error.message;
@@ -867,6 +1137,8 @@ def run_local_chart_server(
     available_tickers = set(price_series_by_ticker)
     options_panel = make_purchase_panel(stocks, available_tickers, app_version_suffix())
     page = chart_html.replace("</body>", options_panel + "</body>")
+    stock_visibility_lock = Lock()
+    view_range_lock = Lock()
 
     class RequestHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -926,16 +1198,81 @@ def run_local_chart_server(
                         "added": len(new_rows),
                         "duplicates": prepared["duplicates"],
                         "warning_count": len(prepared["warnings"]),
+                        "source_headers": prepared["source_headers"],
+                        "unmapped_rows": prepared["unmapped_rows"],
                         "markers": markers,
                     })
                 except Exception as error:
                     self.send_json(500, {"error": f"Kunde inte importera aktiehändelser: {error}"})
                 return
+            if self.path == "/api/stock-visibility":
+                try:
+                    payload_length = int(self.headers.get("Content-Length", "0"))
+                    request_payload = json.loads(self.rfile.read(payload_length)) if payload_length else {}
+                    ticker = str(request_payload.get("ticker") or "").strip()
+                    visible = request_payload.get("visible")
+                    if not ticker or not isinstance(visible, bool):
+                        self.send_json(400, {"error": "Ticker och synlighetsvärde krävs."})
+                        return
+                    with stock_visibility_lock:
+                        stock = next((item for item in stocks if item["ticker"] == ticker), None)
+                        if stock is None:
+                            self.send_json(404, {"error": "Aktien finns inte i appens lista."})
+                            return
+                        stock["show_initially"] = visible
+                        with STOCK_LIST_FILE.open("w", encoding="utf-8", newline="") as file:
+                            writer = csv.DictWriter(file, fieldnames=["ticker", "name", "show_initially"])
+                            writer.writeheader()
+                            for item in stocks:
+                                writer.writerow({
+                                    "ticker": item["ticker"],
+                                    "name": item["name"],
+                                    "show_initially": "true" if item["show_initially"] else "false",
+                                })
+                    self.send_json(200, {"ticker": ticker, "show_initially": visible})
+                except Exception as error:
+                    self.send_json(500, {"error": f"Kunde inte spara aktiens synlighet: {error}"})
+                return
+            if self.path == "/api/view-range":
+                try:
+                    payload_length = int(self.headers.get("Content-Length", "0"))
+                    request_payload = json.loads(self.rfile.read(payload_length)) if payload_length else {}
+                    start_text = str(request_payload.get("start") or "")
+                    end_text = str(request_payload.get("end") or "")
+                    start = date.fromisoformat(start_text)
+                    end = date.fromisoformat(end_text)
+                    if start.isoformat() != start_text or end.isoformat() != end_text or start >= end:
+                        self.send_json(400, {"error": "Ange ett giltigt datumintervall i formatet ÅÅÅÅ-MM-DD."})
+                        return
+                    with view_range_lock:
+                        temporary_file = VIEW_RANGE_FILE.with_suffix(".json.tmp")
+                        temporary_file.write_text(
+                            json.dumps({"start": start_text, "end": end_text}, ensure_ascii=False, indent=2) + "\n",
+                            encoding="utf-8",
+                        )
+                        temporary_file.replace(VIEW_RANGE_FILE)
+                    self.send_json(200, {"start": start_text, "end": end_text})
+                except (ValueError, TypeError, json.JSONDecodeError) as error:
+                    self.send_json(400, {"error": f"Kunde inte spara datumintervallet: {error}"})
+                except Exception as error:
+                    self.send_json(500, {"error": f"Kunde inte spara datumintervallet: {error}"})
+                return
             if self.path == "/api/current-prices":
                 try:
                     warnings: list[str] = []
-                    symbols = [stock["ticker"] for stock in stocks]
-                    fx_symbols = {currency: symbol for currency, symbol in FX_TICKERS.items()}
+                    payload_length = int(self.headers.get("Content-Length", "0"))
+                    request_payload = json.loads(self.rfile.read(payload_length)) if payload_length else {}
+                    requested_ticker = request_payload.get("ticker")
+                    selected_stocks = [stock for stock in stocks if not requested_ticker or stock["ticker"] == requested_ticker]
+                    if requested_ticker and not selected_stocks:
+                        self.send_json(400, {"error": "Aktien finns inte i appens lista."})
+                        return
+                    needed_currencies = {
+                        "USD" if stock["ticker"] == "BRK-B" else fx_currency_for_ticker(stock["ticker"])
+                        for stock in selected_stocks
+                    }
+                    fx_symbols = {currency: symbol for currency, symbol in FX_TICKERS.items() if currency in needed_currencies}
+                    symbols = [stock["ticker"] for stock in selected_stocks]
 
                     def fetch_intraday(symbol: str):
                         history = yf.Ticker(symbol).history(
@@ -970,7 +1307,7 @@ def run_local_chart_server(
                                 current_fx[currency] = float(previous.iloc[-1])
 
                     updates: dict[str, dict[str, object]] = {}
-                    for stock in stocks:
+                    for stock in selected_stocks:
                         ticker = stock["ticker"]
                         close = intraday.get(ticker)
                         if close is None or close.empty:
@@ -1040,7 +1377,9 @@ def run_local_chart_server(
                             end = (latest_closed_date + timedelta(days=1)).isoformat()
                             data = yf.download(
                                 ticker, start=start, end=end,
-                                auto_adjust=True, progress=False,
+                                # Use unadjusted close prices so the graph and
+                                # transaction values match quoted market prices.
+                                auto_adjust=False, progress=False,
                             )
                             if data.empty or "Close" not in data:
                                 continue
@@ -1105,16 +1444,16 @@ def run_local_chart_server(
                 commission = Decimal("".join(commission_text.split()).replace(",", "."))
                 if ticker not in price_series_by_ticker:
                     raise ValueError("Aktien saknar hämtad kursdata.")
-                if transaction_type not in {"KÖP", "SÄLJ"}:
-                    raise ValueError("Transaktionstyp måste vara köp eller sälj.")
+                if transaction_type not in {"KÖP", "SÄLJ", "UTDELNING"}:
+                    raise ValueError("Transaktionstyp måste vara köp, sälj eller utdelning.")
                 if not quantity.is_finite() or quantity <= 0:
                     raise ValueError("Antalet måste vara större än noll.")
                 if not price.is_finite() or price <= 0:
-                    raise ValueError("Kursen måste vara större än noll.")
+                    raise ValueError("Kursen eller utdelningsbeloppet måste vara större än noll.")
                 price = price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 price_text = format(price, ".2f")
                 if not commission.is_finite() or commission < 0:
-                    raise ValueError("Courtage måste vara noll eller större.")
+                    raise ValueError("Courtage eller källskatt måste vara noll eller större.")
                 commission = commission.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                 commission_text = format(commission, ".2f")
                 series = price_series_by_ticker[ticker]
@@ -1220,7 +1559,9 @@ def main() -> None:
             ticker,
             start=START_DATE,
             end=end,
-            auto_adjust=True,
+            # Use actual close prices; dividend-adjusted prices distort the
+            # quoted share price before an ex-dividend date.
+            auto_adjust=False,
             progress=False,
         )
 
@@ -1443,9 +1784,9 @@ def main() -> None:
         showlegend=False,
         margin={"r": 145},
     )
-    visible_end = comparison.index.max()
+    visible_start, visible_end = load_visible_date_range(comparison.index.min(), comparison.index.max())
     figure.update_xaxes(
-        range=[INITIAL_VISIBLE_START, visible_end],
+        range=[visible_start, visible_end],
         hoverformat="%Y-%m-%d",
         rangeslider={
             "visible": True,
@@ -1499,6 +1840,30 @@ const traceIsVisible = graph.data.map(
 );
 let soloTicker = null;
 let soloVisibilitySnapshot = null;
+window.getSoloTicker = () => soloTicker;
+window.getVisibleTickers = () => Object.entries(stockTraceByTicker)
+  .filter(([, index]) => graph.data[index].visible !== 'legendonly' && graph.data[index].visible !== false)
+  .map(([ticker]) => ticker);
+let visibilitySaveQueue = Promise.resolve();
+function saveStockVisibility(ticker, visible) {
+  visibilitySaveQueue = visibilitySaveQueue.then(async () => {
+    const response = await fetch('/api/stock-visibility', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ticker, visible}),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Visningsläget kunde inte sparas.');
+  }).catch(error => {
+    const status = document.getElementById('refresh-data-status');
+    if (status) status.textContent = `Visningsläget kunde inte sparas: ${error.message}`;
+  });
+  return visibilitySaveQueue;
+}
+function refreshFilteredTables() {
+  if (window.renderPurchaseList) window.renderPurchaseList();
+  if (window.renderPortfolioSummary) window.renderPortfolioSummary();
+}
 function applyVisibility(visibility) {
   const indices = [];
   const values = [];
@@ -1531,13 +1896,13 @@ function setSolo(ticker, checked) {
     soloTicker = ticker;
     return applyVisibility(graph.data.map(
       trace => Boolean(trace.meta && trace.meta.ticker === ticker)
-    ));
+    )).then(refreshFilteredTables);
   }
   if (soloTicker === ticker && soloVisibilitySnapshot) {
     const previous = soloVisibilitySnapshot;
     soloTicker = null;
     soloVisibilitySnapshot = null;
-    return applyVisibility(previous);
+    return applyVisibility(previous).then(refreshFilteredTables);
   }
 }
 function toggleTicker(ticker) {
@@ -1552,7 +1917,9 @@ function toggleTicker(ticker) {
     graph.data.forEach((trace, index) => {
       if (trace.meta && trace.meta.ticker === ticker) previous[index] = next;
     });
-    return applyVisibility(previous);
+    return applyVisibility(previous)
+      .then(() => saveStockVisibility(ticker, next))
+      .then(refreshFilteredTables);
   }
   const indices = graph.data.map((trace, index) =>
     trace.meta && trace.meta.ticker === ticker ? index : -1
@@ -1561,8 +1928,9 @@ function toggleTicker(ticker) {
     graph,
     {visible: indices.map(() => stockVisible ? 'legendonly' : true)},
     indices
-  ).then(() => {
+  ).then(() => saveStockVisibility(ticker, !stockVisible)).then(() => {
     window.renderCustomLegend();
+    refreshFilteredTables();
   });
 }
 window.renderCustomLegend = function() {
@@ -1613,6 +1981,7 @@ window.suggestPurchasePrice = function() {
   const tickerField = document.getElementById('purchase-ticker');
   const dateField = document.getElementById('purchase-date');
   if (!tickerField || !dateField) return;
+  if (document.getElementById('purchase-type').value === 'UTDELNING') return;
   const ticker = tickerField.value;
   const selectedDate = dateField.value;
   const traceIndex = stockTraceByTicker[ticker];
@@ -1675,7 +2044,7 @@ function refreshProfitLabel(ticker, render = true) {
         const amountFx = Number(details[7]);
         const tickerFx = Number(details[8]);
         if (Number.isFinite(amountFx) && amountFx > 0 && Number.isFinite(tickerFx) && tickerFx > 0) {
-          profit += purchasePrice * enteredQuantity * amountFx / tickerFx;
+          profit += (purchasePrice * enteredQuantity - fee) * amountFx / tickerFx;
         }
       } else if (transactionType === 'SÄLJ') {
         heldQuantity -= quantity;
@@ -1977,7 +2346,7 @@ function handleGraphClick(eventData) {
     const clickedRawPrice = Number(Array.isArray(pointData) ? pointData[0] : pointData);
     const clickedFxFactor = Array.isArray(pointData) ? Number(pointData[2] || 1) : 1;
     const clickedPrice = clickedRawPrice * clickedFxFactor;
-    if (Number.isFinite(clickedPrice) && clickedPrice > 0) {
+    if (document.getElementById('purchase-type').value !== 'UTDELNING' && Number.isFinite(clickedPrice) && clickedPrice > 0) {
       document.getElementById('purchase-price').value = clickedPrice.toLocaleString('sv-SE', {useGrouping: false, minimumFractionDigits: 2, maximumFractionDigits: 2});
       if (window.updatePurchaseTotal) window.updatePurchaseTotal();
     }
@@ -2077,6 +2446,9 @@ graph.on('plotly_relayout', eventData => {
       eventData['xaxis.range[1]'] || (activeRange && activeRange[1])];
   }
   if (window.syncVisibleDateInputs) window.syncVisibleDateInputs(range);
+  const rangeToPersist = Array.isArray(range) && range.length >= 2 && range[0] && range[1]
+    ? range : (graph._fullLayout && graph._fullLayout.xaxis && graph._fullLayout.xaxis.range);
+  if (window.persistVisibleDateRange) window.persistVisibleDateRange(rangeToPersist);
   clearTimeout(rebaseTimer);
   rebaseTimer = setTimeout(() => rebaseToVisibleStart(eventData), 100);
 });
