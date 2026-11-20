@@ -2,6 +2,8 @@
 
 Lokal Python-app för att jämföra aktier, visa köp och sälj i diagrammet och följa portföljresultat. Funktionaliteten och beteendekraven finns dokumenterade i [OpenSpec](openspec/specs/aktiediagram/spec.md).
 
+> **Ny version:** en vidareutvecklad PHP-version för webbhotell finns i [mattihjelm/aktiediagram-php](https://github.com/mattihjelm/aktiediagram-php). Den läser samma datafiler och har bland annat konton per transaktion, import från mäklaren direkt i webbläsaren, borttagning av transaktioner, minutdiagram med arkiv, fler skal- och mätlägen, orealiserat resultat och telefonlayout.
+
 ## Krav
 
 - Python 3.10 eller senare
